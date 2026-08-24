@@ -181,6 +181,7 @@ def build_temporal_reference(
     left_rank: int,
     right_rank: int,
     decay: float = 0.0,
+    singular_power: float = 0.0,
 ) -> tuple[Tensor, Tensor]:
     """Build Q_L^t and Q_R^t from recent accepted compact SVD updates."""
 
@@ -188,14 +189,16 @@ def build_temporal_reference(
         raise ValueError("history must contain at least one compact SVD")
     if left_rank <= 0 or right_rank <= 0:
         raise ValueError("reference ranks must be positive")
+    if singular_power < 0:
+        raise ValueError("singular_power must be non-negative")
 
     weights = _recency_weights(len(history), decay, history[0].s)
     left_blocks: list[Tensor] = []
     right_blocks: list[Tensor] = []
     for svd, weight in zip(reversed(history), weights):
-        scale = torch.sqrt(weight)
-        left_blocks.append(scale * svd.u)
-        right_blocks.append(scale * svd.v)
+        scale = torch.sqrt(weight) * svd.s.pow(singular_power)
+        left_blocks.append(svd.u * scale.unsqueeze(0))
+        right_blocks.append(svd.v * scale.unsqueeze(0))
 
     left_matrix = torch.cat(left_blocks, dim=1)
     right_matrix = torch.cat(right_blocks, dim=1)
@@ -229,6 +232,33 @@ def project_to_reference(
     return projected, core, rho
 
 
+def compatibility_scores(
+    update: CompactSVD,
+    q_left_ref: Tensor,
+    q_right_ref: Tensor,
+    *,
+    eps: float = 1e-12,
+) -> tuple[Tensor, Tensor, Tensor]:
+    """Return left, right, and two-sided retained-energy compatibility."""
+
+    if q_left_ref.ndim != 2 or q_right_ref.ndim != 2:
+        raise ValueError("reference bases must be matrices")
+    if q_left_ref.shape[0] != update.u.shape[0] or q_right_ref.shape[0] != update.v.shape[0]:
+        raise ValueError("reference bases are incompatible with update shape")
+
+    left_coords = q_left_ref.T @ update.u
+    right_coords = update.v.T @ q_right_ref
+    left_energy = torch.sum((left_coords * update.s.unsqueeze(0)).square())
+    right_energy = torch.sum((update.s.unsqueeze(1) * right_coords).square())
+    core = (left_coords * update.s.unsqueeze(0)) @ right_coords
+    two_sided_energy = torch.sum(core.square())
+    denominator = update.fro_norm_sq() + eps
+    return tuple(
+        torch.clamp(value / denominator, min=0.0, max=1.0)
+        for value in (left_energy, right_energy, two_sided_energy)
+    )
+
+
 def _check_lora_pair(b_factor: Tensor, a_factor: Tensor, name: str) -> None:
     if b_factor.ndim != 2 or a_factor.ndim != 2:
         raise ValueError(f"{name} LoRA factors must be matrices")
@@ -248,4 +278,3 @@ def _recency_weights(count: int, decay: float, like: Tensor) -> Tensor:
 def _top_left_singular_vectors(matrix: Tensor, rank: int) -> Tensor:
     u, _, _ = torch.linalg.svd(matrix, full_matrices=False)
     return u[:, : min(rank, u.shape[1])]
-

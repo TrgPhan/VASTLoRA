@@ -3649,3 +3649,20 @@ LoRA subspace transport
 gauge-invariant stale LoRA
 version-aware low-rank federated fine-tuning
 ```
+
+---
+
+## Week 4 debug status - 2026-08-24
+
+The corrected, leakage-controlled held-out gate does **not** support the original
+VAST utility-score hypothesis. The current Week-4 verdict is **NO-GO for original
+VAST**, with a supported pivot candidate: two-sided corrective projection without
+the stale residual. See `docs/week4/week4_debug_rescue_results_vi.md` for the full
+evidence, exact metrics, implementation fixes, and remaining Week-1 baselines.
+
+The subsequent direction search produced a **CONDITIONAL GO** for MTIP-LoRA on
+SST-2 under non-IID/high-staleness: rank-2 two-sided temporal intersection beat
+freshness on 6/6 seeds by +3.364 accuracy points on average. IID results were
+neutral and QNLI confirmation was negative, so the claim is explicitly
+regime-specific and not task-general. See
+`docs/week4/week4_novel_direction_results_vi.md`.

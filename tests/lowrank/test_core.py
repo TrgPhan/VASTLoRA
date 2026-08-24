@@ -3,12 +3,31 @@ import torch
 from vastlora.lowrank import (
     LowRankMatrix,
     build_temporal_reference,
+    compatibility_scores,
     compact_svd,
     exact_lora_innovation,
     project_to_reference,
     recompress,
     weighted_sum,
 )
+
+
+def test_compatibility_scores_match_dense_projection_energy() -> None:
+    torch.manual_seed(41)
+    update = compact_svd(LowRankMatrix(_randn(7, 3), _randn(3, 6)))
+    q_left, _ = torch.linalg.qr(_randn(7, 2), mode="reduced")
+    q_right, _ = torch.linalg.qr(_randn(6, 2), mode="reduced")
+
+    rho_left, rho_right, rho_two = compatibility_scores(update, q_left, q_right)
+    dense = update.dense()
+    denominator = torch.sum(dense.square())
+    left_dense = q_left @ q_left.T @ dense
+    right_dense = dense @ q_right @ q_right.T
+    two_dense = q_left @ q_left.T @ dense @ q_right @ q_right.T
+
+    torch.testing.assert_close(rho_left, torch.sum(left_dense.square()) / denominator)
+    torch.testing.assert_close(rho_right, torch.sum(right_dense.square()) / denominator)
+    torch.testing.assert_close(rho_two, torch.sum(two_dense.square()) / denominator)
 
 
 def _randn(*shape: int) -> torch.Tensor:
@@ -99,6 +118,26 @@ def test_temporal_reference_projection_matches_dense_oracle() -> None:
     assert 0.0 <= float(rho) <= 1.0
 
 
+def test_temporal_reference_can_prioritize_high_energy_modes() -> None:
+    u = torch.eye(3, dtype=torch.float64)
+    v = torch.eye(3, dtype=torch.float64)
+    history = [
+        compact_svd(
+            LowRankMatrix(u, torch.diag(torch.tensor([10.0, 2.0, 1.0], dtype=torch.float64)))
+        )
+    ]
+
+    q_left, q_right = build_temporal_reference(
+        history,
+        left_rank=1,
+        right_rank=1,
+        singular_power=1.0,
+    )
+
+    assert torch.abs(q_left[0, 0]) > 0.999
+    assert torch.abs(q_right[0, 0]) > 0.999
+
+
 def test_full_reference_projection_has_unit_compatibility() -> None:
     torch.manual_seed(6)
     update = compact_svd(LowRankMatrix(_randn(7, 4), _randn(4, 6)), rtol=1e-12)
@@ -107,4 +146,3 @@ def test_full_reference_projection_has_unit_compatibility() -> None:
 
     torch.testing.assert_close(projected.dense(), update.dense(), rtol=1e-10, atol=1e-10)
     assert float(rho) > 1.0 - 1e-10
-

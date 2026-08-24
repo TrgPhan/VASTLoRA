@@ -54,9 +54,13 @@ def label_shard_partition_indices(
     for label in sorted(by_label, key=str):
         sorted_indices.extend(by_label[label])
 
-    shards = [[] for _ in range(total_shards)]
-    for offset, index in enumerate(sorted_indices):
-        shards[offset % total_shards].append(index)
+    shard_size, extra = divmod(len(sorted_indices), total_shards)
+    shards: list[list[int]] = []
+    start = 0
+    for shard_index in range(total_shards):
+        stop = start + shard_size + (1 if shard_index < extra else 0)
+        shards.append(sorted_indices[start:stop])
+        start = stop
 
     rng = random.Random(seed)
     rng.shuffle(shards)
@@ -68,4 +72,3 @@ def label_shard_partition_indices(
         for shard in shards[start:stop]:
             partitions[client_id].extend(shard)
     return partitions
-

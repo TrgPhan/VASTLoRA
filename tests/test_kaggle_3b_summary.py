@@ -14,6 +14,8 @@ def _write_result(
     nll: float,
     binary_nll: float | None = None,
     variant: str | None = None,
+    balanced_accuracy: float | None = None,
+    brier: float | None = None,
 ) -> None:
     target_name = variant or method
     target = root / f"{target_name}_seed{seed}"
@@ -42,6 +44,10 @@ def _write_result(
     }
     if binary_nll is not None:
         payload["metrics"]["final_binary_nll"] = binary_nll
+    if balanced_accuracy is not None:
+        payload["metrics"]["final_balanced_accuracy"] = balanced_accuracy
+    if brier is not None:
+        payload["metrics"]["final_brier"] = brier
     (target / "result.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
@@ -110,3 +116,49 @@ def test_routed_method_must_clear_both_nll_gates(tmp_path: Path) -> None:
     assert verdict["target_nll_gain_vs_freshness"] > 0.0
     assert verdict["target_binary_nll_gain_vs_freshness"] < 0.0
     assert verdict["status"] == "INCONCLUSIVE"
+
+
+def test_five_seed_target_can_clear_robust_pareto_gate(tmp_path: Path) -> None:
+    for seed in (1, 2, 3, 4, 5):
+        _write_result(
+            tmp_path,
+            "freshness",
+            seed,
+            0.70,
+            0.50,
+            0.20,
+            balanced_accuracy=0.70,
+            brier=0.10,
+        )
+        _write_result(tmp_path, "vast", seed, 0.69, 0.49, 0.19)
+        _write_result(tmp_path, "mtip", seed, 0.70, 0.60, 0.25)
+        _write_result(tmp_path, "mtip_adaptive", seed, 0.70, 0.55, 0.22)
+        _write_result(
+            tmp_path,
+            "mtip_hybrid",
+            seed,
+            0.71,
+            0.525,
+            0.204,
+            variant="hybrid_beta020",
+            balanced_accuracy=0.71,
+            brier=0.102,
+        )
+
+    _, _, verdict = summarize_results(tmp_path, target_variant="hybrid_beta020")
+
+    assert verdict["status"] == "GO"
+    assert verdict["target_balanced_accuracy_gain_pp"] == pytest.approx(1.0)
+    assert verdict["gate"]["minimum_seeds_for_full_go"] == 5
+
+
+def test_reporting_refuses_unfrozen_target_variant(tmp_path: Path) -> None:
+    _write_result(tmp_path, "freshness", 1, 0.70, 0.50)
+    _write_result(tmp_path, "vast", 1, 0.69, 0.51)
+    _write_result(tmp_path, "mtip", 1, 0.70, 0.50)
+    _write_result(tmp_path, "mtip_adaptive", 1, 0.71, 0.49)
+
+    _, _, verdict = summarize_results(tmp_path, target_variant="hybrid_beta020")
+
+    assert verdict["status"] == "INCOMPLETE"
+    assert verdict["missing_target_variant"] == "hybrid_beta020"

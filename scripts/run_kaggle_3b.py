@@ -69,6 +69,12 @@ def main() -> None:
     output_dir = Path(config["output_dir"]) / f"{args.method}_seed{args.seed}"
     output_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(result.pop("events")).to_csv(output_dir / "events.csv", index=False)
+    pd.DataFrame(result.pop("baseline_eval_details")).to_csv(
+        output_dir / "baseline_eval_details.csv", index=False
+    )
+    pd.DataFrame(result.pop("final_eval_details")).to_csv(
+        output_dir / "final_eval_details.csv", index=False
+    )
     (output_dir / "result.json").write_text(
         json.dumps(result, indent=2, sort_keys=True), encoding="utf-8"
     )
@@ -120,7 +126,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         rank_rtol=experiment["rank_rtol"],
     )
 
-    baseline = evaluate_sentiment(
+    baseline, baseline_details = evaluate_sentiment(
         model,
         tokenizer,
         validation,
@@ -227,7 +233,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         active_rank=experiment["server_max_rank"],
         initialize_free_directions=False,
     )
-    final = evaluate_sentiment(
+    final, final_details = evaluate_sentiment(
         model,
         tokenizer,
         validation,
@@ -270,6 +276,8 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         "config": config,
         "metrics": metrics,
         "events": event_rows,
+        "baseline_eval_details": baseline_details,
+        "final_eval_details": final_details,
     }
 
 
@@ -372,10 +380,11 @@ def evaluate_sentiment(
     label_column: str,
     max_length: int,
     batch_size: int,
-) -> dict[str, float]:
+) -> tuple[dict[str, float], list[dict[str, Any]]]:
     model.eval()
     correct = 0
     true_nlls: list[float] = []
+    detail_rows: list[dict[str, Any]] = []
     device = _model_input_device(model)
     examples = [(item[text_column], int(item[label_column])) for item in dataset]
     for start in range(0, len(examples), batch_size):
@@ -399,11 +408,33 @@ def evaluate_sentiment(
         mask = shifted_labels.ne(-100)
         nll = (token_loss * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1)
         scores = nll.view(len(group), 2).cpu()
-        for row, (_, true_label) in zip(scores, group):
+        probabilities = torch.softmax(-scores, dim=1)
+        for offset, (row, probs, (text, true_label)) in enumerate(
+            zip(scores, probabilities, group)
+        ):
             prediction = int(torch.argmin(row).item())
             correct += int(prediction == true_label)
             true_nlls.append(float(row[true_label].item()))
-    return {"accuracy": correct / len(examples), "nll": _mean(true_nlls)}
+            wrong_label = 1 - true_label
+            detail_rows.append(
+                {
+                    "eval_index": start + offset,
+                    "text": text,
+                    "true_label": true_label,
+                    "predicted_label": prediction,
+                    "is_correct": int(prediction == true_label),
+                    "nll_negative": float(row[0].item()),
+                    "nll_positive": float(row[1].item()),
+                    "true_nll": float(row[true_label].item()),
+                    "wrong_nll": float(row[wrong_label].item()),
+                    "nll_margin": float(row[wrong_label].item() - row[true_label].item()),
+                    "prob_negative": float(probs[0].item()),
+                    "prob_positive": float(probs[1].item()),
+                    "true_probability": float(probs[true_label].item()),
+                    "prediction_confidence": float(probs[prediction].item()),
+                }
+            )
+    return {"accuracy": correct / len(examples), "nll": _mean(true_nlls)}, detail_rows
 
 
 def _collate_examples(tokenizer, examples: Sequence[tuple[str, int]], *, max_length: int):

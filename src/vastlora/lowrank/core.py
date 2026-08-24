@@ -85,6 +85,24 @@ class CompactSVD:
         return torch.sum(self.s.square())
 
 
+@dataclass(frozen=True)
+class AdaptiveReference:
+    """Two-sided temporal basis with independently selected ranks."""
+
+    q_left: Tensor
+    q_right: Tensor
+    left_retained_energy: float
+    right_retained_energy: float
+
+    @property
+    def left_rank(self) -> int:
+        return self.q_left.shape[1]
+
+    @property
+    def right_rank(self) -> int:
+        return self.q_right.shape[1]
+
+
 def exact_lora_innovation(
     b_final: Tensor,
     a_final: Tensor,
@@ -207,6 +225,51 @@ def build_temporal_reference(
     return q_left, q_right
 
 
+def build_adaptive_temporal_reference(
+    history: Sequence[CompactSVD],
+    *,
+    energy_threshold: float = 0.9,
+    min_rank: int = 1,
+    max_rank: int | None = None,
+    decay: float = 0.0,
+    singular_power: float = 0.0,
+) -> AdaptiveReference:
+    """Choose left and right temporal ranks from cumulative spectral energy."""
+
+    if not history:
+        raise ValueError("history must contain at least one compact SVD")
+    if not 0.0 < energy_threshold <= 1.0:
+        raise ValueError("energy_threshold must be in (0, 1]")
+    if min_rank <= 0:
+        raise ValueError("min_rank must be positive")
+    if max_rank is not None and max_rank < min_rank:
+        raise ValueError("max_rank must be at least min_rank")
+    if singular_power < 0:
+        raise ValueError("singular_power must be non-negative")
+
+    weights = _recency_weights(len(history), decay, history[0].s)
+    left_blocks: list[Tensor] = []
+    right_blocks: list[Tensor] = []
+    for svd, weight in zip(reversed(history), weights):
+        scale = torch.sqrt(weight) * svd.s.pow(singular_power)
+        left_blocks.append(svd.u * scale.unsqueeze(0))
+        right_blocks.append(svd.v * scale.unsqueeze(0))
+
+    q_left, left_energy = _adaptive_left_singular_vectors(
+        torch.cat(left_blocks, dim=1),
+        energy_threshold=energy_threshold,
+        min_rank=min_rank,
+        max_rank=max_rank,
+    )
+    q_right, right_energy = _adaptive_left_singular_vectors(
+        torch.cat(right_blocks, dim=1),
+        energy_threshold=energy_threshold,
+        min_rank=min_rank,
+        max_rank=max_rank,
+    )
+    return AdaptiveReference(q_left, q_right, left_energy, right_energy)
+
+
 def project_to_reference(
     update: CompactSVD,
     q_left_ref: Tensor,
@@ -278,3 +341,30 @@ def _recency_weights(count: int, decay: float, like: Tensor) -> Tensor:
 def _top_left_singular_vectors(matrix: Tensor, rank: int) -> Tensor:
     u, _, _ = torch.linalg.svd(matrix, full_matrices=False)
     return u[:, : min(rank, u.shape[1])]
+
+
+def _adaptive_left_singular_vectors(
+    matrix: Tensor,
+    *,
+    energy_threshold: float,
+    min_rank: int,
+    max_rank: int | None,
+) -> tuple[Tensor, float]:
+    u, s, _ = torch.linalg.svd(matrix, full_matrices=False)
+    available = s.numel()
+    rank_cap = available if max_rank is None else min(max_rank, available)
+    if rank_cap == 0:
+        return u[:, :0], 0.0
+
+    energy = s.square()
+    total = energy.sum()
+    if float(total) == 0.0:
+        selected_rank = min(min_rank, rank_cap)
+        return u[:, :selected_rank], 0.0
+
+    cumulative = torch.cumsum(energy, dim=0) / total
+    threshold = torch.tensor(energy_threshold, device=s.device, dtype=s.dtype)
+    selected_rank = int(torch.searchsorted(cumulative, threshold).item()) + 1
+    selected_rank = max(min_rank, min(selected_rank, rank_cap))
+    retained = float(cumulative[selected_rank - 1].item())
+    return u[:, :selected_rank], retained

@@ -20,6 +20,11 @@ dependencies = [
 dev = [
     "pytest>=8.0",
 ]
+scale = [
+    "accelerate>=1.2",
+    "bitsandbytes>=0.45",
+    "peft>=0.14",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

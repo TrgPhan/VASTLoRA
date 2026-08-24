@@ -2,6 +2,7 @@ import torch
 
 from vastlora.lowrank import (
     LowRankMatrix,
+    build_adaptive_temporal_reference,
     build_temporal_reference,
     compatibility_scores,
     compact_svd,
@@ -146,3 +147,47 @@ def test_full_reference_projection_has_unit_compatibility() -> None:
 
     torch.testing.assert_close(projected.dense(), update.dense(), rtol=1e-10, atol=1e-10)
     assert float(rho) > 1.0 - 1e-10
+
+
+def test_adaptive_temporal_reference_selects_each_side_independently() -> None:
+    u = torch.eye(4, dtype=torch.float64)
+    v = torch.eye(4, dtype=torch.float64)
+    history = [
+        compact_svd(
+            LowRankMatrix(
+                u,
+                torch.diag(torch.tensor([4.0, 2.0, 1.0, 0.5], dtype=torch.float64)),
+            ),
+            rtol=1e-12,
+        )
+    ]
+
+    reference = build_adaptive_temporal_reference(
+        history,
+        energy_threshold=0.9,
+        min_rank=1,
+        max_rank=4,
+        singular_power=1.0,
+    )
+
+    assert reference.left_rank == 2
+    assert reference.right_rank == 2
+    assert reference.left_retained_energy >= 0.9
+    assert reference.right_retained_energy >= 0.9
+
+
+def test_adaptive_temporal_reference_honors_rank_bounds() -> None:
+    torch.manual_seed(7)
+    history = [
+        compact_svd(LowRankMatrix(_randn(8, 6), _randn(6, 7)), rtol=1e-12)
+    ]
+
+    reference = build_adaptive_temporal_reference(
+        history,
+        energy_threshold=0.999,
+        min_rank=2,
+        max_rank=3,
+    )
+
+    assert reference.left_rank == 3
+    assert reference.right_rank == 3

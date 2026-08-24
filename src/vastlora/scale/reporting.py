@@ -16,6 +16,7 @@ def summarize_results(
     input_dir: Path,
     *,
     target_variant: str = "mtip_adaptive",
+    development_status: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     records = []
     for path in sorted(input_dir.glob("*_seed*/result.json")):
@@ -36,7 +37,13 @@ def summarize_results(
     frame = pd.DataFrame(records).sort_values(["seed", "variant"]).reset_index(drop=True)
     comparisons = _paired_comparisons(frame)
     missing = sorted(EXPECTED_METHODS - set(frame["method"]))
-    verdict = _build_verdict(frame, comparisons, missing, target_variant=target_variant)
+    verdict = _build_verdict(
+        frame,
+        comparisons,
+        missing,
+        target_variant=target_variant,
+        development_status=development_status,
+    )
     return frame, comparisons, verdict
 
 
@@ -69,9 +76,12 @@ def write_summary(
     output_dir: Path,
     *,
     target_variant: str = "mtip_adaptive",
+    development_status: str | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     summary, comparisons, verdict = summarize_results(
-        input_dir, target_variant=target_variant
+        input_dir,
+        target_variant=target_variant,
+        development_status=development_status,
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     summary.to_csv(output_dir / "method_summary.csv", index=False)
@@ -136,6 +146,7 @@ def _build_verdict(
     missing: list[str],
     *,
     target_variant: str,
+    development_status: str | None,
 ) -> dict[str, Any]:
     if missing:
         return {
@@ -221,6 +232,12 @@ def _build_verdict(
     else:
         status = "INCONCLUSIVE"
         reason = "Accuracy and NLL do not provide a consistent margin over freshness."
+    if development_status == "DEV_GATE_MISS" and status in {"PILOT_GO", "GO"}:
+        status = "INCONCLUSIVE"
+        reason = (
+            "Confirmation metrics pass, but the frozen target did not clear the "
+            "development gate; GO is blocked by protocol."
+        )
 
     verdict = {
         "status": status,
@@ -228,6 +245,7 @@ def _build_verdict(
         "best_method_by_mean_accuracy": str(best_method),
         "target_method": target_method,
         "target_variant": target_variant,
+        "development_status": development_status,
         "target_accuracy_gain_vs_freshness_pp": mean_accuracy_gain,
         "target_nll_gain_vs_freshness": mean_nll_gain,
         "target_binary_nll_gain_vs_freshness": mean_binary_nll_gain,

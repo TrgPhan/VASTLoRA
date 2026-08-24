@@ -151,6 +151,14 @@ def test_five_seed_target_can_clear_robust_pareto_gate(tmp_path: Path) -> None:
     assert verdict["target_balanced_accuracy_gain_pp"] == pytest.approx(1.0)
     assert verdict["gate"]["minimum_seeds_for_full_go"] == 5
 
+    _, _, blocked = summarize_results(
+        tmp_path,
+        target_variant="hybrid_beta020",
+        development_status="DEV_GATE_MISS",
+    )
+    assert blocked["status"] == "INCONCLUSIVE"
+    assert "blocked by protocol" in blocked["reason"]
+
 
 def test_reporting_refuses_unfrozen_target_variant(tmp_path: Path) -> None:
     _write_result(tmp_path, "freshness", 1, 0.70, 0.50)

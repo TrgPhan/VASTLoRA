@@ -113,7 +113,9 @@ def _build_verdict(
         frame.groupby("method")["final_accuracy"].mean().sort_values(ascending=False).index[0]
     )
 
-    if mean_accuracy_gain >= 0.5 and mean_nll_gain >= 0.0:
+    clears_metric_gate = mean_accuracy_gain >= 0.5 and mean_nll_gain >= 0.0
+    wins_every_seed = wins == seed_count
+    if clears_metric_gate and wins_every_seed:
         status = "PILOT_GO" if seed_count < 3 else "GO"
         reason = "Adaptive MTIP improves both accuracy and NLL over freshness."
     elif mean_accuracy_gain <= -0.5 and mean_nll_gain < 0.0:
@@ -134,6 +136,7 @@ def _build_verdict(
         "gate": {
             "minimum_accuracy_gain_pp": 0.5,
             "requires_nonnegative_nll_gain": True,
+            "requires_accuracy_win_every_seed": True,
             "minimum_seeds_for_full_go": 3,
         },
     }

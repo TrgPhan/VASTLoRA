@@ -55,3 +55,21 @@ def test_summary_refuses_verdict_when_method_is_missing(tmp_path: Path) -> None:
 
     assert verdict["status"] == "INCOMPLETE"
     assert set(verdict["missing_methods"]) == {"vast", "mtip"}
+
+
+def test_full_go_requires_adaptive_to_win_every_seed(tmp_path: Path) -> None:
+    for seed, freshness_accuracy, adaptive_accuracy in (
+        (1, 0.70, 0.73),
+        (2, 0.70, 0.73),
+        (3, 0.70, 0.695),
+    ):
+        _write_result(tmp_path, "freshness", seed, freshness_accuracy, 0.50)
+        _write_result(tmp_path, "vast", seed, 0.69, 0.51)
+        _write_result(tmp_path, "mtip", seed, 0.70, 0.50)
+        _write_result(tmp_path, "mtip_adaptive", seed, adaptive_accuracy, 0.45)
+
+    _, _, verdict = summarize_results(tmp_path)
+
+    assert verdict["adaptive_accuracy_gain_vs_freshness_pp"] > 0.5
+    assert verdict["adaptive_accuracy_wins"] == 2
+    assert verdict["status"] == "INCONCLUSIVE"

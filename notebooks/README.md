@@ -5,6 +5,8 @@ Kaggle T4x2. Enable Internet and select the T4x2 accelerator before running all
 cells. The default `pilot` mode compares Freshness, VAST, fixed MTIP, and
 adaptive MTIP on one seed. Set `RUN_MODE = "full"` for the three-seed GO gate.
 
-The notebook clones and checks out runner commit `5c44028`, records the resolved
+The notebook clones and checks out runner commit `75f7e69`, records the resolved
 commit in every result, and writes CSV, JSON, Markdown, plots, and a downloadable
-ZIP under `/kaggle/working/vastlora-3b-results`.
+ZIP under `/kaggle/working/vastlora-3b-results`. Updated runs also write
+per-example NLL debug CSVs and worst-regression tables under
+`/kaggle/working/vastlora-3b-results/summary/nll_debug`.

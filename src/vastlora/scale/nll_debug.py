@@ -376,6 +376,11 @@ def _event_summary(frames: list[pd.DataFrame]) -> pd.DataFrame:
                 "post_mean_local_loss": post["local_loss"].mean(),
                 "post_mean_rho": post["rho"].mean(),
                 "post_p90_rho": post["rho"].quantile(0.90),
+                "post_mean_residual_scale": (
+                    post["residual_scale"].mean()
+                    if "residual_scale" in post.columns
+                    else float("nan")
+                ),
                 "post_mean_left_rank": post["mean_left_rank"].mean(),
                 "post_mean_right_rank": post["mean_right_rank"].mean(),
             }

@@ -7,7 +7,7 @@ and one confirmation seed. Set `RUN_MODE = "full"` to tune on a holdout removed
 from client training, freeze one target variant, and run the five-seed Pareto
 gate on the full SST-2 validation set.
 
-The notebook clones and checks out runner commit `069fb69`, records the resolved
+The notebook clones and checks out runner commit `01e5d63`, records the resolved
 commit in every result, and writes CSV, JSON, Markdown, plots, and a downloadable
 ZIP under `/kaggle/working/vastlora-3b-results`. Updated runs also write
 per-example NLL debug CSVs and worst-regression tables under

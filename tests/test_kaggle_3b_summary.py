@@ -6,11 +6,21 @@ import pytest
 from vastlora.scale.reporting import summarize_results
 
 
-def _write_result(root: Path, method: str, seed: int, accuracy: float, nll: float) -> None:
-    target = root / f"{method}_seed{seed}"
+def _write_result(
+    root: Path,
+    method: str,
+    seed: int,
+    accuracy: float,
+    nll: float,
+    binary_nll: float | None = None,
+    variant: str | None = None,
+) -> None:
+    target_name = variant or method
+    target = root / f"{target_name}_seed{seed}"
     target.mkdir(parents=True)
     payload = {
         "method": method,
+        "variant": target_name,
         "seed": seed,
         "model": "test-3b",
         "git_commit": "abc123",
@@ -30,6 +40,8 @@ def _write_result(root: Path, method: str, seed: int, accuracy: float, nll: floa
             "peak_cuda_memory_gib": 4.0,
         },
     }
+    if binary_nll is not None:
+        payload["metrics"]["final_binary_nll"] = binary_nll
     (target / "result.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
@@ -72,4 +84,29 @@ def test_full_go_requires_adaptive_to_win_every_seed(tmp_path: Path) -> None:
 
     assert verdict["adaptive_accuracy_gain_vs_freshness_pp"] > 0.5
     assert verdict["adaptive_accuracy_wins"] == 2
+    assert verdict["status"] == "INCONCLUSIVE"
+
+
+def test_routed_method_must_clear_both_nll_gates(tmp_path: Path) -> None:
+    for seed in (1, 2, 3):
+        _write_result(tmp_path, "freshness", seed, 0.70, 0.50, 0.20)
+        _write_result(tmp_path, "vast", seed, 0.69, 0.48, 0.19)
+        _write_result(tmp_path, "mtip", seed, 0.71, 0.60, 0.25)
+        _write_result(tmp_path, "mtip_adaptive", seed, 0.71, 0.55, 0.22)
+        _write_result(
+            tmp_path,
+            "mtip_routed",
+            seed,
+            0.72,
+            0.49,
+            0.21,
+            variant="routed_c4_t1",
+        )
+
+    _, _, verdict = summarize_results(tmp_path, target_variant="routed_c4_t1")
+
+    assert verdict["target_method"] == "mtip_routed"
+    assert verdict["target_variant"] == "routed_c4_t1"
+    assert verdict["target_nll_gain_vs_freshness"] > 0.0
+    assert verdict["target_binary_nll_gain_vs_freshness"] < 0.0
     assert verdict["status"] == "INCONCLUSIVE"

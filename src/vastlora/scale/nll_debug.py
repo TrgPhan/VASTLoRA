@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
+import json
 from pathlib import Path
 from typing import Any
 
@@ -151,9 +153,18 @@ def _load_details(input_dir: Path) -> tuple[list[pd.DataFrame], list[str]]:
             raise ValueError(
                 f"{detail_path} is missing columns: {sorted(missing_columns)}"
             )
-        method, seed = _parse_run_name(run_dir.name)
-        frame["method"] = method
-        frame["seed"] = seed
+        if "binary_nll" not in frame.columns:
+            frame["binary_nll"] = -frame["true_probability"].clip(lower=1e-12).map(
+                math.log
+            )
+        for optional_nll in ("label_nll", "eos_nll"):
+            if optional_nll not in frame.columns:
+                frame[optional_nll] = float("nan")
+        if "brier" not in frame.columns:
+            frame["brier"] = (frame["prob_positive"] - frame["true_label"]) ** 2
+        payload = json.loads(result_path.read_text(encoding="utf-8"))
+        frame["method"] = payload.get("variant", payload.get("method", run_dir.name))
+        frame["seed"] = int(payload["seed"])
         frames.append(frame)
     return frames, missing
 
@@ -162,16 +173,12 @@ def _load_events(input_dir: Path) -> list[pd.DataFrame]:
     frames: list[pd.DataFrame] = []
     for event_path in sorted(input_dir.glob("*_seed*/events.csv")):
         frame = pd.read_csv(event_path)
-        method, seed = _parse_run_name(event_path.parent.name)
-        frame["method"] = method
-        frame["seed"] = seed
+        result_path = event_path.parent / "result.json"
+        payload = json.loads(result_path.read_text(encoding="utf-8"))
+        frame["method"] = payload.get("variant", payload.get("method", event_path.parent.name))
+        frame["seed"] = int(payload["seed"])
         frames.append(frame)
     return frames
-
-
-def _parse_run_name(name: str) -> tuple[str, int]:
-    method, seed_text = name.rsplit("_seed", 1)
-    return method, int(seed_text)
 
 
 def _run_summary(frame: pd.DataFrame) -> pd.DataFrame:
@@ -179,6 +186,10 @@ def _run_summary(frame: pd.DataFrame) -> pd.DataFrame:
     summary = grouped.agg(
         accuracy=("is_correct", "mean"),
         mean_true_nll=("true_nll", "mean"),
+        mean_binary_nll=("binary_nll", "mean"),
+        mean_label_nll=("label_nll", "mean"),
+        mean_eos_nll=("eos_nll", "mean"),
+        mean_brier=("brier", "mean"),
         median_true_nll=("true_nll", "median"),
         p90_true_nll=("true_nll", lambda values: values.quantile(0.90)),
         p95_true_nll=("true_nll", lambda values: values.quantile(0.95)),
@@ -205,6 +216,7 @@ def _label_summary(frame: pd.DataFrame) -> pd.DataFrame:
             count=("eval_index", "count"),
             accuracy=("is_correct", "mean"),
             mean_true_nll=("true_nll", "mean"),
+            mean_binary_nll=("binary_nll", "mean"),
             p90_true_nll=("true_nll", lambda values: values.quantile(0.90)),
             mean_true_probability=("true_probability", "mean"),
         )
@@ -228,6 +240,8 @@ def _paired_against_freshness(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.Dat
                 base[
                     [
                         "true_nll",
+                        "binary_nll",
+                        "brier",
                         "is_correct",
                         "predicted_label",
                         "prediction_confidence",
@@ -238,6 +252,12 @@ def _paired_against_freshness(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.Dat
             )
             joined["delta_true_nll_vs_freshness"] = (
                 joined["true_nll"] - joined["true_nll_freshness"]
+            )
+            joined["delta_binary_nll_vs_freshness"] = (
+                joined["binary_nll"] - joined["binary_nll_freshness"]
+            )
+            joined["delta_brier_vs_freshness"] = (
+                joined["brier"] - joined["brier_freshness"]
             )
             joined["candidate_fixed_freshness_error"] = (
                 (joined["is_correct_freshness"] == 0) & (joined["is_correct"] == 1)
@@ -251,6 +271,12 @@ def _paired_against_freshness(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.Dat
                     "method": method,
                     "mean_delta_nll_vs_freshness": joined[
                         "delta_true_nll_vs_freshness"
+                    ].mean(),
+                    "mean_delta_binary_nll_vs_freshness": joined[
+                        "delta_binary_nll_vs_freshness"
+                    ].mean(),
+                    "mean_delta_brier_vs_freshness": joined[
+                        "delta_brier_vs_freshness"
                     ].mean(),
                     "median_delta_nll_vs_freshness": joined[
                         "delta_true_nll_vs_freshness"

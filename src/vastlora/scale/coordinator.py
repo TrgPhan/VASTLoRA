@@ -16,7 +16,14 @@ from vastlora.lowrank import (
 )
 
 
-Method = Literal["freshness", "vast", "mtip", "mtip_adaptive"]
+Method = Literal[
+    "freshness",
+    "vast",
+    "mtip",
+    "mtip_adaptive",
+    "mtip_hybrid",
+    "mtip_routed",
+]
 
 
 @dataclass(frozen=True)
@@ -29,6 +36,9 @@ class TransportConfig:
     adaptive_min_rank: int = 2
     adaptive_max_rank: int = 16
     adaptive_singular_power: float = 1.0
+    residual_beta: float = 0.5
+    residual_staleness_center: float = 4.0
+    residual_staleness_temperature: float = 1.0
     rank_rtol: float = 1e-5
 
 
@@ -41,6 +51,7 @@ class TransportResult:
     right_rank: int
     left_retained_energy: float | None = None
     right_retained_energy: float | None = None
+    residual_scale: float = 0.0
 
 
 def zero_compact(
@@ -72,6 +83,10 @@ def transport_compact_update(
         raise ValueError("staleness must be non-negative")
     if max_rank <= 0:
         raise ValueError("max_rank must be positive")
+    if not 0.0 <= config.residual_beta <= 1.0:
+        raise ValueError("residual_beta must be between zero and one")
+    if config.residual_staleness_temperature <= 0.0:
+        raise ValueError("residual_staleness_temperature must be positive")
 
     freshness = math.exp(-config.freshness_lambda * staleness)
     if method == "freshness" or not history:
@@ -80,7 +95,14 @@ def transport_compact_update(
             max_rank=max_rank,
             rtol=config.rank_rtol,
         )
-        return TransportResult(transported, freshness, 1.0, 0, 0)
+        return TransportResult(
+            update=transported,
+            freshness=freshness,
+            rho=1.0,
+            left_rank=0,
+            right_rank=0,
+            residual_scale=freshness,
+        )
 
     if method == "mtip_adaptive":
         reference = build_adaptive_temporal_reference(
@@ -107,11 +129,25 @@ def transport_compact_update(
         right_energy = None
 
     projected, _, rho_tensor = project_to_reference(update, q_left, q_right)
+    residual_scale = 0.0
     if method in {"mtip", "mtip_adaptive"}:
         candidate = projected
-    elif method == "vast":
-        residual = weighted_sum([update.as_lowrank(), projected], [1.0, -1.0])
-        candidate = weighted_sum([projected, residual], [1.0, freshness])
+    elif method in {"vast", "mtip_hybrid", "mtip_routed"}:
+        if method == "vast":
+            residual_scale = freshness
+        elif method == "mtip_hybrid":
+            residual_scale = freshness * config.residual_beta
+        else:
+            routed_gate = _decreasing_logistic(
+                staleness,
+                center=config.residual_staleness_center,
+                temperature=config.residual_staleness_temperature,
+            )
+            residual_scale = freshness * routed_gate
+        candidate = weighted_sum(
+            [projected, update.as_lowrank()],
+            [1.0 - residual_scale, residual_scale],
+        )
     else:
         raise ValueError(f"unknown transport method: {method}")
 
@@ -124,7 +160,19 @@ def transport_compact_update(
         q_right.shape[1],
         left_energy,
         right_energy,
+        residual_scale,
     )
+
+
+def _decreasing_logistic(value: float, *, center: float, temperature: float) -> float:
+    """Return a numerically stable soft gate that closes as staleness grows."""
+
+    scaled = (float(value) - center) / temperature
+    if scaled >= 0.0:
+        exp_negative = math.exp(-scaled)
+        return exp_negative / (1.0 + exp_negative)
+    exp_positive = math.exp(scaled)
+    return 1.0 / (1.0 + exp_positive)
 
 
 def aggregate_compact_state(

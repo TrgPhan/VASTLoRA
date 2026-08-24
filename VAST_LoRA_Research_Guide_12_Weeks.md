@@ -3666,3 +3666,11 @@ freshness on 6/6 seeds by +3.364 accuracy points on average. IID results were
 neutral and QNLI confirmation was negative, so the claim is explicitly
 regime-specific and not task-general. See
 `docs/week4/week4_novel_direction_results_vi.md`.
+
+The first Qwen2.5-3B confirmation is **INCONCLUSIVE**: fixed MTIP improved mean
+accuracy by 1.042 points but materially degraded sequence NLL, binary candidate
+NLL, confidence, and margin. The active rescue protocol restores a controlled
+fraction of the stale residual, tunes only on a holdout removed from client
+training, and freezes one variant before a five-seed confirmation. See
+`docs/week4/week4_3b_nll_rescue_plan_vi.md`. This update does not upgrade the
+thesis verdict until the new confirmation artifacts exist.

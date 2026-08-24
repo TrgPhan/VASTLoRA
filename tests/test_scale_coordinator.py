@@ -63,6 +63,76 @@ def test_mtip_adaptive_is_compact_and_reports_selected_ranks() -> None:
     assert 0.0 <= result.rho <= 1.0
 
 
+def test_hybrid_endpoints_match_mtip_and_vast() -> None:
+    history = [_svd(seed) for seed in (2, 3, 4)]
+    update = _svd(5)
+
+    mtip = transport_compact_update(
+        update,
+        history,
+        method="mtip",
+        staleness=4,
+        config=TransportConfig(rank_rtol=1e-12),
+        max_rank=7,
+    )
+    beta_zero = transport_compact_update(
+        update,
+        history,
+        method="mtip_hybrid",
+        staleness=4,
+        config=TransportConfig(residual_beta=0.0, rank_rtol=1e-12),
+        max_rank=7,
+    )
+    vast = transport_compact_update(
+        update,
+        history,
+        method="vast",
+        staleness=4,
+        config=TransportConfig(rank_rtol=1e-12),
+        max_rank=7,
+    )
+    beta_one = transport_compact_update(
+        update,
+        history,
+        method="mtip_hybrid",
+        staleness=4,
+        config=TransportConfig(residual_beta=1.0, rank_rtol=1e-12),
+        max_rank=7,
+    )
+
+    torch.testing.assert_close(beta_zero.update.dense(), mtip.update.dense())
+    torch.testing.assert_close(beta_one.update.dense(), vast.update.dense())
+
+
+def test_routed_residual_closes_as_staleness_grows() -> None:
+    history = [_svd(seed) for seed in (2, 3, 4)]
+    update = _svd(5)
+    config = TransportConfig(
+        residual_staleness_center=4.0,
+        residual_staleness_temperature=1.0,
+        rank_rtol=1e-12,
+    )
+
+    fresh = transport_compact_update(
+        update,
+        history,
+        method="mtip_routed",
+        staleness=1,
+        config=config,
+        max_rank=7,
+    )
+    stale = transport_compact_update(
+        update,
+        history,
+        method="mtip_routed",
+        staleness=8,
+        config=config,
+        max_rank=7,
+    )
+
+    assert 0.0 < stale.residual_scale < fresh.residual_scale < 1.0
+
+
 def test_compact_aggregation_matches_dense_sum() -> None:
     server = _svd(6, rank=2)
     update = _svd(7, rank=3)

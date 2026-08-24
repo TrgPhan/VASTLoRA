@@ -7,6 +7,7 @@ import json
 import math
 from pathlib import Path
 import random
+import re
 import subprocess
 import sys
 import time
@@ -35,22 +36,38 @@ from vastlora.scale import (
     mask_inactive_rank_gradients,
     transport_compact_update,
 )
+from vastlora.scale.tradeoff import reserved_train_eval_indices
 
 
 LABEL_TEXT = {0: " negative", 1: " positive"}
-METHODS = ("freshness", "vast", "mtip", "mtip_adaptive")
+METHODS = (
+    "freshness",
+    "vast",
+    "mtip",
+    "mtip_adaptive",
+    "mtip_hybrid",
+    "mtip_routed",
+)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Memory-bounded 3B MTIP Kaggle benchmark")
     parser.add_argument("--config", type=Path, default=ROOT / "configs/kaggle_3b_pilot.json")
     parser.add_argument("--method", choices=METHODS, required=True)
+    parser.add_argument("--variant")
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--model-name")
     parser.add_argument("--collected-returns", type=int)
     parser.add_argument("--local-steps", type=int)
     parser.add_argument("--eval-examples", type=int)
+    parser.add_argument("--eval-offset", type=int)
+    parser.add_argument("--eval-shuffle-seed", type=int)
+    parser.add_argument("--eval-split")
+    parser.add_argument("--reserve-eval-from-train", action="store_true")
+    parser.add_argument("--residual-beta", type=float)
+    parser.add_argument("--residual-staleness-center", type=float)
+    parser.add_argument("--residual-staleness-temperature", type=float)
     parser.add_argument("--no-4bit", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -58,6 +75,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.variant is not None and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", args.variant) is None:
+        raise ValueError("variant must contain only letters, numbers, dot, underscore, or dash")
     config = json.loads(args.config.read_text(encoding="utf-8"))
     _apply_overrides(config, args)
     _validate_config(config, args.method)
@@ -66,7 +85,9 @@ def main() -> None:
         return
 
     result = run_experiment(config, method=args.method, seed=args.seed)
-    output_dir = Path(config["output_dir"]) / f"{args.method}_seed{args.seed}"
+    variant = args.variant or args.method
+    result["variant"] = variant
+    output_dir = Path(config["output_dir"]) / f"{variant}_seed{args.seed}"
     output_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(result.pop("events")).to_csv(output_dir / "events.csv", index=False)
     pd.DataFrame(result.pop("baseline_eval_details")).to_csv(
@@ -87,13 +108,29 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
     _seed_everything(seed)
     dataset_config = config["dataset"]
     raw = load_dataset(dataset_config["hub_path"], dataset_config.get("subset"))
-    train = raw[dataset_config["train_split"]]
-    validation = raw[dataset_config["validation_split"]]
+    train_split = dataset_config["train_split"]
+    eval_split = dataset_config.get("eval_split", dataset_config["validation_split"])
+    eval_shuffle_seed = dataset_config.get("eval_shuffle_seed", seed)
+    eval_offset = int(dataset_config.get("eval_offset", 0))
+    eval_examples = int(dataset_config["eval_examples"])
+    if eval_split == train_split and dataset_config.get("reserve_eval_from_train", False):
+        train_indices, eval_indices = reserved_train_eval_indices(
+            len(raw[train_split]),
+            eval_offset=eval_offset,
+            eval_examples=eval_examples,
+            shuffle_seed=eval_shuffle_seed,
+        )
+        train = raw[train_split].select(train_indices)
+        validation = raw[train_split].select(eval_indices)
+    else:
+        validation = raw[eval_split].shuffle(seed=eval_shuffle_seed)
+        eval_end = min(eval_offset + eval_examples, len(validation))
+        if eval_offset < 0 or eval_offset >= eval_end:
+            raise ValueError("eval_offset must select at least one evaluation example")
+        validation = validation.select(range(eval_offset, eval_end))
+        train = raw[train_split]
     train = train.shuffle(seed=seed).select(
         range(min(dataset_config["max_train_examples"], len(train)))
-    )
-    validation = validation.shuffle(seed=seed).select(
-        range(min(dataset_config["eval_examples"], len(validation)))
     )
 
     experiment = config["experiment"]
@@ -123,6 +160,11 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         adaptive_min_rank=experiment["adaptive_min_rank"],
         adaptive_max_rank=experiment["adaptive_max_rank"],
         adaptive_singular_power=experiment["adaptive_singular_power"],
+        residual_beta=experiment.get("residual_beta", 0.5),
+        residual_staleness_center=experiment.get("residual_staleness_center", 4.0),
+        residual_staleness_temperature=experiment.get(
+            "residual_staleness_temperature", 1.0
+        ),
         rank_rtol=experiment["rank_rtol"],
     )
 
@@ -185,6 +227,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         left_ranks: list[int] = []
         right_ranks: list[int] = []
         freshness_values: list[float] = []
+        residual_scales: list[float] = []
         for name, innovation in innovations.items():
             transported = transport_compact_update(
                 innovation,
@@ -204,6 +247,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
             histories[name].append(transported.update)
             rhos.append(transported.rho)
             freshness_values.append(transported.freshness)
+            residual_scales.append(transported.residual_scale)
             if transported.left_rank:
                 left_ranks.append(transported.left_rank)
                 right_ranks.append(transported.right_rank)
@@ -222,6 +266,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                 "local_loss": local_loss,
                 "freshness": _mean(freshness_values),
                 "rho": _mean(rhos),
+                "residual_scale": _mean(residual_scales),
                 "mean_left_rank": _mean(left_ranks),
                 "mean_right_rank": _mean(right_ranks),
             }
@@ -248,11 +293,22 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
     )
     metrics = {
         "baseline_accuracy": baseline["accuracy"],
+        "baseline_balanced_accuracy": baseline["balanced_accuracy"],
+        "baseline_brier": baseline["brier"],
         "baseline_nll": baseline["nll"],
+        "baseline_binary_nll": baseline["binary_nll"],
+        "baseline_label_nll": baseline["label_nll"],
+        "baseline_eos_nll": baseline["eos_nll"],
         "final_accuracy": final["accuracy"],
+        "final_balanced_accuracy": final["balanced_accuracy"],
+        "final_brier": final["brier"],
         "final_nll": final["nll"],
+        "final_binary_nll": final["binary_nll"],
+        "final_label_nll": final["label_nll"],
+        "final_eos_nll": final["eos_nll"],
         "accuracy_change_pp": 100.0 * (final["accuracy"] - baseline["accuracy"]),
         "nll_change": final["nll"] - baseline["nll"],
+        "binary_nll_change": final["binary_nll"] - baseline["binary_nll"],
         "mean_local_loss": _mean([row["local_loss"] for row in event_rows]),
         "mean_staleness": _mean([row["staleness"] for row in event_rows]),
         "mean_rho_after_warmup": _mean(
@@ -383,7 +439,13 @@ def evaluate_sentiment(
 ) -> tuple[dict[str, float], list[dict[str, Any]]]:
     model.eval()
     correct = 0
+    label_totals = {0: 0, 1: 0}
+    label_correct = {0: 0, 1: 0}
+    brier_scores: list[float] = []
     true_nlls: list[float] = []
+    binary_nlls: list[float] = []
+    true_label_nlls: list[float] = []
+    true_eos_nlls: list[float] = []
     detail_rows: list[dict[str, Any]] = []
     device = _model_input_device(model)
     examples = [(item[text_column], int(item[label_column])) for item in dataset]
@@ -407,14 +469,28 @@ def evaluate_sentiment(
         )
         mask = shifted_labels.ne(-100)
         nll = (token_loss * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1)
+        eos_mask = mask & shifted_labels.eq(tokenizer.eos_token_id)
+        label_mask = mask & ~eos_mask
+        label_nll = (token_loss * label_mask).sum(dim=1) / label_mask.sum(dim=1).clamp_min(1)
+        eos_nll = (token_loss * eos_mask).sum(dim=1) / eos_mask.sum(dim=1).clamp_min(1)
         scores = nll.view(len(group), 2).cpu()
+        label_scores = label_nll.view(len(group), 2).cpu()
+        eos_scores = eos_nll.view(len(group), 2).cpu()
         probabilities = torch.softmax(-scores, dim=1)
-        for offset, (row, probs, (text, true_label)) in enumerate(
-            zip(scores, probabilities, group)
+        for offset, (row, label_row, eos_row, probs, (text, true_label)) in enumerate(
+            zip(scores, label_scores, eos_scores, probabilities, group)
         ):
             prediction = int(torch.argmin(row).item())
             correct += int(prediction == true_label)
+            label_totals[true_label] += 1
+            label_correct[true_label] += int(prediction == true_label)
             true_nlls.append(float(row[true_label].item()))
+            binary_nll = float(-torch.log(probs[true_label].clamp_min(1e-12)).item())
+            binary_nlls.append(binary_nll)
+            brier = float((probs[1].item() - true_label) ** 2)
+            brier_scores.append(brier)
+            true_label_nlls.append(float(label_row[true_label].item()))
+            true_eos_nlls.append(float(eos_row[true_label].item()))
             wrong_label = 1 - true_label
             detail_rows.append(
                 {
@@ -426,6 +502,10 @@ def evaluate_sentiment(
                     "nll_negative": float(row[0].item()),
                     "nll_positive": float(row[1].item()),
                     "true_nll": float(row[true_label].item()),
+                    "binary_nll": binary_nll,
+                    "brier": brier,
+                    "label_nll": float(label_row[true_label].item()),
+                    "eos_nll": float(eos_row[true_label].item()),
                     "wrong_nll": float(row[wrong_label].item()),
                     "nll_margin": float(row[wrong_label].item() - row[true_label].item()),
                     "prob_negative": float(probs[0].item()),
@@ -434,7 +514,18 @@ def evaluate_sentiment(
                     "prediction_confidence": float(probs[prediction].item()),
                 }
             )
-    return {"accuracy": correct / len(examples), "nll": _mean(true_nlls)}, detail_rows
+    balanced_accuracy = _mean(
+        [label_correct[label] / label_totals[label] for label in (0, 1) if label_totals[label]]
+    )
+    return {
+        "accuracy": correct / len(examples),
+        "balanced_accuracy": balanced_accuracy,
+        "brier": _mean(brier_scores),
+        "nll": _mean(true_nlls),
+        "binary_nll": _mean(binary_nlls),
+        "label_nll": _mean(true_label_nlls),
+        "eos_nll": _mean(true_eos_nlls),
+    }, detail_rows
 
 
 def _collate_examples(tokenizer, examples: Sequence[tuple[str, int]], *, max_length: int):
@@ -533,6 +624,22 @@ def _apply_overrides(config: dict[str, Any], args: argparse.Namespace) -> None:
         config["experiment"]["local_steps"] = args.local_steps
     if args.eval_examples is not None:
         config["dataset"]["eval_examples"] = args.eval_examples
+    if args.eval_offset is not None:
+        config["dataset"]["eval_offset"] = args.eval_offset
+    if args.eval_shuffle_seed is not None:
+        config["dataset"]["eval_shuffle_seed"] = args.eval_shuffle_seed
+    if args.eval_split is not None:
+        config["dataset"]["eval_split"] = args.eval_split
+    if args.reserve_eval_from_train:
+        config["dataset"]["reserve_eval_from_train"] = True
+    if args.residual_beta is not None:
+        config["experiment"]["residual_beta"] = args.residual_beta
+    if args.residual_staleness_center is not None:
+        config["experiment"]["residual_staleness_center"] = args.residual_staleness_center
+    if args.residual_staleness_temperature is not None:
+        config["experiment"]["residual_staleness_temperature"] = (
+            args.residual_staleness_temperature
+        )
     if args.no_4bit:
         config["model"]["load_in_4bit"] = False
 
@@ -552,6 +659,10 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
         raise ValueError("adaptive_max_rank cannot exceed server_max_rank")
     if experiment["warmup_returns"] < 1 or experiment["collected_returns"] < 1:
         raise ValueError("warmup_returns and collected_returns must be positive")
+    if not 0.0 <= experiment.get("residual_beta", 0.5) <= 1.0:
+        raise ValueError("residual_beta must be between zero and one")
+    if experiment.get("residual_staleness_temperature", 1.0) <= 0.0:
+        raise ValueError("residual_staleness_temperature must be positive")
 
 
 def _dry_run_summary(config: Mapping[str, Any], args: argparse.Namespace) -> dict[str, Any]:

@@ -1,0 +1,32 @@
+{
+  "seed": 17,
+  "buffer_size": 2,
+  "max_returns": 12,
+  "clients": [
+    {
+      "client_id": "c_fast_r4",
+      "rank": 4,
+      "num_samples": 120,
+      "compute_time": 1.0,
+      "network_time": 0.1,
+      "jitter": 0.0
+    },
+    {
+      "client_id": "c_mid_r8",
+      "rank": 8,
+      "num_samples": 160,
+      "compute_time": 2.0,
+      "network_time": 0.2,
+      "jitter": 0.0
+    },
+    {
+      "client_id": "c_slow_r16",
+      "rank": 16,
+      "num_samples": 200,
+      "compute_time": 4.0,
+      "network_time": 0.3,
+      "jitter": 0.0
+    }
+  ]
+}
+

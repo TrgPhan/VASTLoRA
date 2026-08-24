@@ -1,0 +1,21 @@
+{
+  "dataset": {
+    "name": "sst2",
+    "hub_path": "nyu-mll/glue",
+    "subset": "sst2",
+    "text_column": "sentence",
+    "label_column": "label",
+    "index_column": "idx",
+    "train_split": "train",
+    "validation_split": "validation",
+    "unlabeled_splits": ["test"],
+    "metric": "accuracy"
+  },
+  "diagnostic": {
+    "num_clients": 10,
+    "partition": "iid",
+    "seeds": [17, 31, 43],
+    "rank_schedule": [4, 8, 16, 4, 8, 16, 4, 8, 16, 8],
+    "target_staleness": [0, 1, 2, 4, 8]
+  }
+}

@@ -17,3 +17,10 @@ The gate reports sequence NLL, label-only NLL, EOS NLL, binary candidate NLL,
 Brier score, balanced accuracy, and paired confidence intervals. Tuning
 artifacts and the frozen target are stored under
 `/kaggle/working/vastlora-3b-results/tuning`.
+
+`kaggle_qwen_3b_vast_slice_matrix.ipynb` runs the follow-up Qwen2.5-3B
+slice-matrix benchmark for the revised VAST question. It checks three regimes:
+IID homogeneous rank, IID heterogeneous rank, and non-IID high-staleness
+heterogeneous rank. The notebook compares `freshness`, `vast`, and `mtip`,
+then writes paired NLL/calibration/accuracy summaries and a VAST hard-slice
+verdict under `/kaggle/working/vastlora-3b-slice-results/slice_summary`.

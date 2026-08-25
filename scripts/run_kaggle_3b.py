@@ -41,6 +41,7 @@ from vastlora.scale.tradeoff import reserved_train_eval_indices
 
 LABEL_TEXT = {0: " negative", 1: " positive"}
 METHODS = (
+    "raw",
     "freshness",
     "vast",
     "mtip",

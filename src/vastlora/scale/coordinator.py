@@ -17,6 +17,7 @@ from vastlora.lowrank import (
 
 
 Method = Literal[
+    "raw",
     "freshness",
     "vast",
     "mtip",
@@ -89,6 +90,20 @@ def transport_compact_update(
         raise ValueError("residual_staleness_temperature must be positive")
 
     freshness = math.exp(-config.freshness_lambda * staleness)
+    if method == "raw":
+        transported = recompress(
+            update.as_lowrank(),
+            max_rank=max_rank,
+            rtol=config.rank_rtol,
+        )
+        return TransportResult(
+            update=transported,
+            freshness=freshness,
+            rho=1.0,
+            left_rank=0,
+            right_rank=0,
+            residual_scale=1.0,
+        )
     if method == "freshness" or not history:
         transported = recompress(
             update.as_lowrank().scaled(freshness),

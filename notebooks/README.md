@@ -21,6 +21,14 @@ artifacts and the frozen target are stored under
 `kaggle_qwen_3b_vast_slice_matrix.ipynb` runs the follow-up Qwen2.5-3B
 slice-matrix benchmark for the revised VAST question. It checks three regimes:
 IID homogeneous rank, IID heterogeneous rank, and non-IID high-staleness
-heterogeneous rank. The notebook compares `freshness`, `vast`, and `mtip`,
-then writes paired NLL/calibration/accuracy summaries and a VAST hard-slice
-verdict under `/kaggle/working/vastlora-3b-slice-results/slice_summary`.
+heterogeneous rank. The notebook compares `raw`, `freshness`, `vast`, and
+`mtip`, then writes paired NLL/calibration/accuracy summaries and a VAST
+hard-slice verdict under `/kaggle/working/vastlora-3b-slice-results/slice_summary`.
+
+`kaggle_qwen_3b_week1_competitor_board.ipynb` runs the same 3B reproduced
+baseline family (`raw`, `freshness`, `vast`, `mtip`) and builds a Week 1
+competitor board next to literature targets such as GLoRA, FedRot-LoRA, FLoRG,
+FedEx-LoRA, SDFLoRA, FSLoRA, and AlignFed. External paper rows are marked as
+reference-only unless they have been ported into the matched simulator, so the
+notebook can judge whether the current VAST result is strong enough without
+overclaiming against incompatible paper numbers.

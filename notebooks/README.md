@@ -26,9 +26,10 @@ heterogeneous rank. The notebook compares `raw`, `freshness`, `vast`, and
 hard-slice verdict under `/kaggle/working/vastlora-3b-slice-results/slice_summary`.
 
 `kaggle_qwen_3b_week1_competitor_board.ipynb` runs the same 3B reproduced
-baseline family (`raw`, `freshness`, `vast`, `mtip`) and builds a Week 1
-competitor board next to literature targets such as GLoRA, FedRot-LoRA, FLoRG,
-FedEx-LoRA, SDFLoRA, FSLoRA, and AlignFed. External paper rows are marked as
-reference-only unless they have been ported into the matched simulator, so the
-notebook can judge whether the current VAST result is strong enough without
-overclaiming against incompatible paper numbers.
+baseline family (`raw`, `fedex`, `freshness`, `fedrot`, `vast`, `mtip`) and
+builds a Week 1 competitor board next to literature targets such as GLoRA,
+FedRot-LoRA, FLoRG, FedEx-LoRA, SDFLoRA, FSLoRA, and AlignFed. `fedex` and
+`fedrot` are matched-simulator ports of the public-code external baselines;
+remaining paper rows stay reference-only unless they have been ported into the
+matched simulator, so the notebook can judge whether the current VAST result is
+strong enough without overclaiming against incompatible paper numbers.

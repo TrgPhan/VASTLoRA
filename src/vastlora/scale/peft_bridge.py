@@ -147,6 +147,62 @@ def compact_factor_innovations(
     return updates
 
 
+def fedrot_aggregate_factor_state(
+    server: Mapping[str, CompactSVD],
+    client_after: Mapping[str, FactorSnapshot],
+    *,
+    active_rank: int,
+    weight: float,
+    max_rank: int,
+    rank_rtol: float = 1e-5,
+) -> dict[str, CompactSVD]:
+    """Aggregate final client LoRA factors after orthogonal Procrustes alignment.
+
+    This is the matched-simulator FedRot-LoRA baseline: the client keeps the
+    same represented update after rotation, but its latent rank coordinates are
+    aligned to the current server factors before factor-space averaging.
+    """
+
+    if not 0.0 <= weight <= 1.0:
+        raise ValueError("FedRot factor averaging weight must be in [0, 1]")
+    if max_rank <= 0:
+        raise ValueError("max_rank must be positive")
+    if set(server) != set(client_after):
+        missing = sorted(set(server) - set(client_after))
+        extra = sorted(set(client_after) - set(server))
+        raise ValueError(f"state mismatch for FedRot aggregation; missing={missing}, extra={extra}")
+
+    aggregated: dict[str, CompactSVD] = {}
+    for name, compact in server.items():
+        client = client_after[name]
+        if not 0 < active_rank <= client.a.shape[0]:
+            raise ValueError(f"active_rank={active_rank} is invalid for {name}")
+        if max_rank > client.a.shape[0]:
+            raise ValueError(f"max_rank={max_rank} exceeds available LoRA rank for {name}")
+
+        server_b, server_a = _compact_to_lora_factors(
+            compact,
+            rank=max_rank,
+            scaling=client.scaling,
+        )
+        client_b = _pad_columns(client.b[:, :active_rank], max_rank)
+        client_a = _pad_rows(client.a[:active_rank, :], max_rank)
+
+        if compact.rank:
+            rotation = _orthogonal_procrustes(client_b, server_b)
+            client_b = client_b @ rotation
+            client_a = rotation.T @ client_a
+
+        next_b = (1.0 - weight) * server_b + weight * client_b
+        next_a = (1.0 - weight) * server_a + weight * client_a
+        aggregated[name] = compact_svd(
+            LowRankMatrix(next_b * client.scaling, next_a),
+            rtol=rank_rtol,
+            max_rank=max_rank,
+        )
+    return aggregated
+
+
 def mask_inactive_rank_gradients(
     model: nn.Module,
     *,
@@ -175,3 +231,59 @@ def _scaling(module: nn.Module, adapter_name: str) -> float:
     if isinstance(scaling, torch.Tensor):
         return float(scaling.item())
     return float(scaling)
+
+
+def _compact_to_lora_factors(
+    compact: CompactSVD,
+    *,
+    rank: int,
+    scaling: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    rows, columns = compact.shape
+    b = torch.zeros((rows, rank), dtype=compact.u.dtype, device=compact.u.device)
+    a = torch.zeros((rank, columns), dtype=compact.u.dtype, device=compact.u.device)
+    represented = min(compact.rank, rank)
+    if represented:
+        root = compact.s[:represented].sqrt()
+        b[:, :represented] = compact.u[:, :represented] * root.unsqueeze(0)
+        a[:represented, :] = root.unsqueeze(1) * compact.v[:, :represented].T / scaling
+    return b, a
+
+
+def _pad_columns(matrix: torch.Tensor, columns: int) -> torch.Tensor:
+    if matrix.shape[1] > columns:
+        raise ValueError("matrix already has more columns than requested")
+    if matrix.shape[1] == columns:
+        return matrix.to(dtype=torch.float32, device="cpu").clone()
+    padding = torch.zeros(
+        (matrix.shape[0], columns - matrix.shape[1]),
+        dtype=torch.float32,
+        device="cpu",
+    )
+    return torch.cat([matrix.to(dtype=torch.float32, device="cpu"), padding], dim=1)
+
+
+def _pad_rows(matrix: torch.Tensor, rows: int) -> torch.Tensor:
+    if matrix.shape[0] > rows:
+        raise ValueError("matrix already has more rows than requested")
+    if matrix.shape[0] == rows:
+        return matrix.to(dtype=torch.float32, device="cpu").clone()
+    padding = torch.zeros(
+        (rows - matrix.shape[0], matrix.shape[1]),
+        dtype=torch.float32,
+        device="cpu",
+    )
+    return torch.cat([matrix.to(dtype=torch.float32, device="cpu"), padding], dim=0)
+
+
+def _orthogonal_procrustes(source: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    if source.shape != target.shape:
+        raise ValueError("Procrustes source and target must have the same shape")
+    if source.ndim != 2:
+        raise ValueError("Procrustes inputs must be matrices")
+    if float(torch.linalg.matrix_norm(source).item()) == 0.0:
+        return torch.eye(source.shape[1], dtype=source.dtype, device=source.device)
+    if float(torch.linalg.matrix_norm(target).item()) == 0.0:
+        return torch.eye(source.shape[1], dtype=source.dtype, device=source.device)
+    u, _, vh = torch.linalg.svd(source.T @ target, full_matrices=False)
+    return u @ vh

@@ -11,6 +11,10 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TARGETS = ROOT / "configs/week1_competitor_targets.json"
+EXTERNAL_METHOD_TO_FRAMEWORK = {
+    "fedex": "FedEx-LoRA",
+    "fedrot": "FedRot-LoRA",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -139,15 +143,15 @@ def build_board(targets: pd.DataFrame, our_runs: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_verdict(targets: pd.DataFrame, our_runs: pd.DataFrame) -> dict[str, Any]:
-    public_reference_count = int(
-        targets["reproduction_status"].eq("reference_only_public_code").sum()
-    )
+    public_targets = targets[targets["reproduction_status"].eq("reference_only_public_code")]
+    public_reference_count = int(len(public_targets))
     if our_runs.empty:
         return {
             "status": "INCOMPLETE",
             "reason": "No reproduced VAST-LoRA Kaggle summary was provided.",
             "can_claim_breakthrough_vs_week1_opponents": False,
             "public_reference_count": public_reference_count,
+            "unreproduced_public_reference_count": public_reference_count,
             "required_next_step": "Run a reproduced baseline matrix or port public-code baselines into the same simulator.",
         }
 
@@ -156,8 +160,18 @@ def build_verdict(targets: pd.DataFrame, our_runs: pd.DataFrame) -> dict[str, An
     best_accuracy = accuracy_rows.sort_values("mean_accuracy", ascending=False).head(1)
     vast_paired = paired_rows[paired_rows["method"].eq("vast")]
     hard_vast = vast_paired[vast_paired["regime"].eq("noniid_high_staleness")]
-    has_public_external_reproduction = False
+    reproduced_external_methods = sorted(
+        set(accuracy_rows["method"].dropna()) & set(EXTERNAL_METHOD_TO_FRAMEWORK)
+    )
+    reproduced_external_frameworks = sorted(
+        EXTERNAL_METHOD_TO_FRAMEWORK[method] for method in reproduced_external_methods
+    )
+    has_public_external_reproduction = bool(reproduced_external_methods)
+    unreproduced_public_reference_count = int(
+        (~public_targets["framework"].isin(reproduced_external_frameworks)).sum()
+    )
     can_claim_breakthrough = False
+    vast_vs_external_hard = None
 
     if not hard_vast.empty:
         row = hard_vast.iloc[0]
@@ -173,21 +187,75 @@ def build_verdict(targets: pd.DataFrame, our_runs: pd.DataFrame) -> dict[str, An
     else:
         vast_hard_signal = None
 
-    reason = (
-        "The board contains reproduced in-house baselines plus Week 1 literature targets. "
-        "Because FedRot/FedEx/FSLoRA/GLoRA are not yet ported into the same simulator, "
-        "the literature rows are reference-only and cannot prove a fair breakthrough."
-    )
+    if has_public_external_reproduction:
+        hard_accuracy = accuracy_rows[accuracy_rows["regime"].eq("noniid_high_staleness")]
+        hard_vast_accuracy = hard_accuracy[hard_accuracy["method"].eq("vast")]
+        hard_external = hard_accuracy[
+            hard_accuracy["method"].isin(reproduced_external_methods)
+        ]
+        if not hard_vast_accuracy.empty and not hard_external.empty:
+            vast_row = hard_vast_accuracy.iloc[0]
+            best_external = hard_external.sort_values(
+                ["mean_accuracy", "mean_balanced_accuracy"],
+                ascending=False,
+            ).iloc[0]
+            vast_vs_external_hard = {
+                "best_external_method": str(best_external["method"]),
+                "best_external_framework": EXTERNAL_METHOD_TO_FRAMEWORK[
+                    str(best_external["method"])
+                ],
+                "accuracy_gain_pp": 100.0
+                * (float(vast_row["mean_accuracy"]) - float(best_external["mean_accuracy"])),
+                "balanced_accuracy_gain_pp": 100.0
+                * (
+                    float(vast_row["mean_balanced_accuracy"])
+                    - float(best_external["mean_balanced_accuracy"])
+                ),
+                "sequence_nll_relative_change": float(vast_row["mean_sequence_nll"])
+                / float(best_external["mean_sequence_nll"])
+                - 1.0,
+                "binary_nll_relative_change": float(vast_row["mean_binary_nll"])
+                / float(best_external["mean_binary_nll"])
+                - 1.0,
+                "brier_relative_change": float(vast_row["mean_brier"])
+                / float(best_external["mean_brier"])
+                - 1.0,
+            }
+            can_claim_breakthrough = (
+                vast_vs_external_hard["balanced_accuracy_gain_pp"] >= -0.5
+                and vast_vs_external_hard["binary_nll_relative_change"] <= 0.05
+                and vast_vs_external_hard["brier_relative_change"] <= 0.05
+                and vast_vs_external_hard["sequence_nll_relative_change"] < 0.0
+                and vast_hard_signal is not None
+                and vast_hard_signal["binary_nll_relative_change"] <= 0.05
+                and vast_hard_signal["brier_relative_change"] <= 0.05
+            )
+        reason = (
+            "The board now includes matched-simulator ports for "
+            f"{', '.join(reproduced_external_frameworks)} plus Week 1 literature targets. "
+            "Remaining literature rows are still reference-only, so broad Week 1 superiority "
+            "requires more external baselines or a clearly stated limited claim."
+        )
+    else:
+        reason = (
+            "The board contains reproduced in-house baselines plus Week 1 literature targets. "
+            "Because FedRot/FedEx/FSLoRA/GLoRA are not yet ported into the same simulator, "
+            "the literature rows are reference-only and cannot prove a fair breakthrough."
+        )
     return {
         "status": "REFERENCE_BOARD_READY",
         "reason": reason,
         "can_claim_breakthrough_vs_week1_opponents": can_claim_breakthrough,
         "has_public_external_reproduction": has_public_external_reproduction,
         "public_reference_count": public_reference_count,
+        "unreproduced_public_reference_count": unreproduced_public_reference_count,
+        "reproduced_external_methods": reproduced_external_methods,
+        "reproduced_external_frameworks": reproduced_external_frameworks,
         "best_reproduced_accuracy_row": (
             best_accuracy.iloc[0].to_dict() if not best_accuracy.empty else None
         ),
         "vast_hard_slice_signal": vast_hard_signal,
+        "vast_vs_external_hard_slice": vast_vs_external_hard,
         "minimum_for_breakthrough_claim": [
             "Port at least FedRot-LoRA or FedEx-LoRA into the same dataset/model/client simulator, or run their official code under a matched config.",
             "Report standard task metrics plus NLL/Brier/ECE and staleness/rank slices.",
@@ -204,6 +272,16 @@ def render_verdict(verdict: dict[str, Any]) -> str:
     lines.append(
         f"- Public-code reference rows not yet reproduced here: {verdict['public_reference_count']}"
     )
+    if "unreproduced_public_reference_count" in verdict:
+        lines[-1] = (
+            "- Public-code reference rows not yet reproduced here: "
+            f"{verdict['unreproduced_public_reference_count']} / {verdict['public_reference_count']}"
+        )
+    if verdict.get("reproduced_external_frameworks"):
+        lines.append(
+            "- Matched-simulator external ports: "
+            + ", ".join(f"`{name}`" for name in verdict["reproduced_external_frameworks"])
+        )
     if verdict.get("vast_hard_slice_signal") is not None:
         signal = verdict["vast_hard_slice_signal"]
         lines.extend(
@@ -213,6 +291,18 @@ def render_verdict(verdict: dict[str, Any]) -> str:
                 f"  - Sequence NLL relative change: {100.0 * signal['sequence_nll_relative_change']:.2f}%",
                 f"  - Binary NLL relative change: {100.0 * signal['binary_nll_relative_change']:.2f}%",
                 f"  - Brier relative change: {100.0 * signal['brier_relative_change']:.2f}%",
+            ]
+        )
+    if verdict.get("vast_vs_external_hard_slice") is not None:
+        external = verdict["vast_vs_external_hard_slice"]
+        lines.extend(
+            [
+                "- VAST vs best external hard-slice port:",
+                f"  - Best external: `{external['best_external_framework']}`",
+                f"  - Balanced-accuracy gain: {external['balanced_accuracy_gain_pp']:.3f} pp",
+                f"  - Sequence NLL relative change: {100.0 * external['sequence_nll_relative_change']:.2f}%",
+                f"  - Binary NLL relative change: {100.0 * external['binary_nll_relative_change']:.2f}%",
+                f"  - Brier relative change: {100.0 * external['brier_relative_change']:.2f}%",
             ]
         )
     lines.extend(["", "### Minimum for a real breakthrough claim"])

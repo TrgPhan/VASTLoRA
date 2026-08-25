@@ -18,7 +18,7 @@
     "eval_shuffle_seed": 314159
   },
   "experiment": {
-    "methods": ["raw", "freshness", "vast", "mtip"],
+    "methods": ["raw", "fedex", "freshness", "fedrot", "vast", "mtip"],
     "seeds": [3101, 3102, 3103],
     "num_clients": 8,
     "shards_per_client": 1,

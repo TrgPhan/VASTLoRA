@@ -32,6 +32,7 @@ from vastlora.scale import (
     capture_factor_snapshot,
     compact_factor_innovations,
     empty_adapter_state,
+    fedrot_aggregate_factor_state,
     load_compact_adapter_state,
     mask_inactive_rank_gradients,
     transport_compact_update,
@@ -42,7 +43,9 @@ from vastlora.scale.tradeoff import reserved_train_eval_indices
 LABEL_TEXT = {0: " negative", 1: " positive"}
 METHODS = (
     "raw",
+    "fedex",
     "freshness",
+    "fedrot",
     "vast",
     "mtip",
     "mtip_adaptive",
@@ -230,29 +233,47 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         right_ranks: list[int] = []
         freshness_values: list[float] = []
         residual_scales: list[float] = []
-        for name, innovation in innovations.items():
-            transported = transport_compact_update(
-                innovation,
-                list(histories[name]),
-                method=accepted_method,
-                staleness=event.staleness,
-                config=transport_config,
-                max_rank=experiment["server_max_rank"],
-            )
-            next_state[name] = aggregate_compact_state(
-                current_state[name],
-                transported.update,
+        if accepted_method == "fedrot":
+            next_state = fedrot_aggregate_factor_state(
+                current_state,
+                after,
+                active_rank=active_rank,
                 weight=experiment["server_update_weight"],
                 max_rank=experiment["server_max_rank"],
                 rank_rtol=experiment["rank_rtol"],
             )
-            histories[name].append(transported.update)
-            rhos.append(transported.rho)
-            freshness_values.append(transported.freshness)
-            residual_scales.append(transported.residual_scale)
-            if transported.left_rank:
-                left_ranks.append(transported.left_rank)
-                right_ranks.append(transported.right_rank)
+            freshness = math.exp(-transport_config.freshness_lambda * event.staleness)
+            rhos.append(1.0)
+            freshness_values.append(freshness)
+            residual_scales.append(1.0)
+            left_ranks.append(experiment["server_max_rank"])
+            right_ranks.append(experiment["server_max_rank"])
+            for name in next_state:
+                histories[name].append(next_state[name])
+        else:
+            for name, innovation in innovations.items():
+                transported = transport_compact_update(
+                    innovation,
+                    list(histories[name]),
+                    method=accepted_method,
+                    staleness=event.staleness,
+                    config=transport_config,
+                    max_rank=experiment["server_max_rank"],
+                )
+                next_state[name] = aggregate_compact_state(
+                    current_state[name],
+                    transported.update,
+                    weight=experiment["server_update_weight"],
+                    max_rank=experiment["server_max_rank"],
+                    rank_rtol=experiment["rank_rtol"],
+                )
+                histories[name].append(transported.update)
+                rhos.append(transported.rho)
+                freshness_values.append(transported.freshness)
+                residual_scales.append(transported.residual_scale)
+                if transported.left_rank:
+                    left_ranks.append(transported.left_rank)
+                    right_ranks.append(transported.right_rank)
 
         server_state = _state_to_cpu(next_state)
         snapshots[event.new_server_version] = server_state

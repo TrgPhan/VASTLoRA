@@ -47,6 +47,19 @@ def test_competitor_board_keeps_reference_targets_separate(tmp_path: Path) -> No
         [
             {
                 "regime": "noniid_high_staleness",
+                "method": "fedrot",
+                "variant": "noniid_high_staleness_fedrot",
+                "seed": 1,
+                "model": "qwen",
+                "client_ranks": "4/8/16",
+                "final_accuracy": 0.92,
+                "final_balanced_accuracy": 0.92,
+                "final_nll": 4.8,
+                "final_binary_nll": 0.195,
+                "final_brier": 0.050,
+            },
+            {
+                "regime": "noniid_high_staleness",
                 "method": "freshness",
                 "variant": "noniid_high_staleness_freshness",
                 "seed": 1,
@@ -99,4 +112,8 @@ def test_competitor_board_keeps_reference_targets_separate(tmp_path: Path) -> No
     }
     assert verdict["can_claim_breakthrough_vs_week1_opponents"] is False
     assert verdict["public_reference_count"] == 1
+    assert verdict["has_public_external_reproduction"] is True
+    assert verdict["unreproduced_public_reference_count"] == 0
+    assert verdict["reproduced_external_frameworks"] == ["FedRot-LoRA"]
+    assert verdict["vast_vs_external_hard_slice"]["best_external_method"] == "fedrot"
     assert verdict["vast_hard_slice_signal"]["sequence_nll_relative_change"] == -0.1

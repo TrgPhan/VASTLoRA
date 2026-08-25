@@ -5,9 +5,11 @@ from torch import nn
 
 from vastlora.lowrank import LowRankMatrix, compact_svd
 from vastlora.scale import (
+    FactorSnapshot,
     capture_factor_snapshot,
     compact_factor_innovations,
     empty_adapter_state,
+    fedrot_aggregate_factor_state,
     load_compact_adapter_state,
     mask_inactive_rank_gradients,
 )
@@ -82,3 +84,34 @@ def test_inactive_rank_gradients_are_masked() -> None:
     assert torch.all(module.lora_A["default"].weight.grad[2:] == 0)
     assert torch.all(module.lora_B["default"].weight.grad[:, :2] == 1)
     assert torch.all(module.lora_B["default"].weight.grad[:, 2:] == 0)
+
+
+def test_fedrot_factor_aggregation_aligns_rotated_client() -> None:
+    generator = torch.Generator().manual_seed(17)
+    b = torch.randn(9, 4, generator=generator)
+    a = torch.randn(4, 7, generator=generator)
+    q, _ = torch.linalg.qr(torch.randn(4, 4, generator=generator))
+    compact = compact_svd(LowRankMatrix(2.0 * b, a), rtol=1e-7, max_rank=4)
+    client = {
+        "projection": FactorSnapshot(
+            a=q.T @ a,
+            b=b @ q,
+            scaling=2.0,
+        )
+    }
+
+    aggregated = fedrot_aggregate_factor_state(
+        {"projection": compact},
+        client,
+        active_rank=4,
+        weight=1.0,
+        max_rank=4,
+        rank_rtol=1e-7,
+    )
+
+    torch.testing.assert_close(
+        aggregated["projection"].dense(),
+        compact.dense(),
+        rtol=1e-5,
+        atol=1e-5,
+    )

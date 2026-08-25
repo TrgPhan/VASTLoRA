@@ -24,7 +24,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from vastlora.asyncfl import AsyncEventSimulator, ClientProfile
-from vastlora.data import label_shard_partition_indices
+from vastlora.data import iid_partition_indices, label_shard_partition_indices
 from vastlora.lowrank import CompactSVD
 from vastlora.scale import (
     TransportConfig,
@@ -64,6 +64,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-offset", type=int)
     parser.add_argument("--eval-shuffle-seed", type=int)
     parser.add_argument("--eval-split")
+    parser.add_argument("--partition-mode", choices=("iid", "label_shard"))
     parser.add_argument("--reserve-eval-from-train", action="store_true")
     parser.add_argument("--residual-beta", type=float)
     parser.add_argument("--residual-staleness-center", type=float)
@@ -135,10 +136,10 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
 
     experiment = config["experiment"]
     label_column = dataset_config["label_column"]
-    partitions = label_shard_partition_indices(
-        list(train[label_column]),
-        experiment["num_clients"],
-        shards_per_client=experiment["shards_per_client"],
+    partitions = _build_partitions(
+        train,
+        label_column=label_column,
+        experiment=experiment,
         seed=seed,
     )
     clients = _build_clients(experiment, partitions)
@@ -573,6 +574,30 @@ def _build_clients(experiment: Mapping[str, Any], partitions: Sequence[Sequence[
     ]
 
 
+def _build_partitions(
+    train,
+    *,
+    label_column: str,
+    experiment: Mapping[str, Any],
+    seed: int,
+) -> list[list[int]]:
+    partition_mode = experiment.get("partition_mode", "label_shard")
+    if partition_mode == "iid":
+        return iid_partition_indices(
+            len(train),
+            experiment["num_clients"],
+            seed=seed,
+        )
+    if partition_mode == "label_shard":
+        return label_shard_partition_indices(
+            list(train[label_column]),
+            experiment["num_clients"],
+            shards_per_client=experiment["shards_per_client"],
+            seed=seed,
+        )
+    raise ValueError(f"unsupported partition_mode: {partition_mode}")
+
+
 def _state_to_cpu(state: Mapping[str, CompactSVD]) -> dict[str, CompactSVD]:
     return {
         name: CompactSVD(
@@ -630,6 +655,8 @@ def _apply_overrides(config: dict[str, Any], args: argparse.Namespace) -> None:
         config["dataset"]["eval_shuffle_seed"] = args.eval_shuffle_seed
     if args.eval_split is not None:
         config["dataset"]["eval_split"] = args.eval_split
+    if args.partition_mode is not None:
+        config["experiment"]["partition_mode"] = args.partition_mode
     if args.reserve_eval_from_train:
         config["dataset"]["reserve_eval_from_train"] = True
     if args.residual_beta is not None:
@@ -649,6 +676,8 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
     num_clients = experiment["num_clients"]
     if method not in METHODS:
         raise ValueError(f"unsupported method: {method}")
+    if experiment.get("partition_mode", "label_shard") not in {"iid", "label_shard"}:
+        raise ValueError("partition_mode must be 'iid' or 'label_shard'")
     if len(experiment["client_ranks"]) != num_clients:
         raise ValueError("client_ranks length must equal num_clients")
     if len(experiment["compute_times"]) != num_clients:
@@ -686,6 +715,7 @@ def _dry_run_summary(config: Mapping[str, Any], args: argparse.Namespace) -> dic
         "mean_staleness": _mean(trace.staleness_values),
         "max_staleness": max(trace.staleness_values),
         "server_max_rank": experiment["server_max_rank"],
+        "partition_mode": experiment.get("partition_mode", "label_shard"),
         "load_in_4bit": config["model"]["load_in_4bit"],
     }
 

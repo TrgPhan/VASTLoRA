@@ -68,20 +68,24 @@ def load_results(input_dir: Path) -> pd.DataFrame:
                 "variant": payload.get("variant", payload["method"]),
                 "seed": int(payload["seed"]),
                 "model": payload["model"],
+                "task": payload.get("task", payload.get("config", {}).get("dataset", {}).get("subset", "unknown")),
+                "regime": payload.get("regime", payload.get("config", {}).get("experiment", {}).get("regime_name", "default")),
                 "git_commit": payload["git_commit"],
                 **payload["metrics"],
             }
         )
     if not records:
         raise ValueError(f"no result.json files found under {input_dir}")
-    return pd.DataFrame(records).sort_values(["method", "seed"]).reset_index(drop=True)
+    return pd.DataFrame(records).sort_values(["task", "regime", "method", "seed"]).reset_index(drop=True)
 
 
 def summarize(frame: pd.DataFrame) -> pd.DataFrame:
     rows = []
-    for method, group in frame.groupby("method"):
+    for (task, regime, method), group in frame.groupby(["task", "regime", "method"]):
         rows.append(
             {
+                "task": task,
+                "regime": regime,
                 "method": method,
                 "fidelity": FIDELITY.get(method, "unknown"),
                 "seeds": int(group["seed"].nunique()),
@@ -92,22 +96,34 @@ def summarize(frame: pd.DataFrame) -> pd.DataFrame:
                 "final_nll_mean": float(group["final_nll"].mean()),
                 "final_binary_nll_mean": float(group["final_binary_nll"].mean()),
                 "final_brier_mean": float(group["final_brier"].mean()),
+                "harmful_update_rate": float(group.get("harmful_update_rate", pd.Series([0.0])).mean()),
+                "late_harmful_update_rate": float(
+                    group.get("late_harmful_update_rate", pd.Series([0.0])).mean()
+                ),
+                "monitor_loss_change": float(
+                    group.get("monitor_loss_change", pd.Series([0.0])).mean()
+                ),
                 "runtime_seconds_mean": float(group["runtime_seconds"].mean()),
                 "peak_cuda_memory_gib_mean": float(group["peak_cuda_memory_gib"].mean()),
             }
         )
     return pd.DataFrame(rows).sort_values(
-        ["final_accuracy_mean", "final_nll_mean"], ascending=[False, True]
+        ["task", "regime", "final_accuracy_mean", "final_nll_mean"],
+        ascending=[True, True, False, True],
     )
 
 
 def paired_against(frame: pd.DataFrame, target: str) -> pd.DataFrame:
     rows = []
-    for method, group in frame.groupby("method"):
+    for (task, regime, method), group in frame.groupby(["task", "regime", "method"]):
         if method == target:
             continue
         joined = group.set_index("seed").join(
-            frame[frame["method"] == target].set_index("seed"),
+            frame[
+                (frame["method"] == target)
+                & (frame["task"] == task)
+                & (frame["regime"] == regime)
+            ].set_index("seed"),
             lsuffix="_candidate",
             rsuffix="_target",
             how="inner",
@@ -116,6 +132,8 @@ def paired_against(frame: pd.DataFrame, target: str) -> pd.DataFrame:
             continue
         rows.append(
             {
+                "task": task,
+                "regime": regime,
                 "method": method,
                 "paired_seeds": int(joined.shape[0]),
                 "target_accuracy_gain_pp": float(
@@ -146,11 +164,27 @@ def paired_against(frame: pd.DataFrame, target: str) -> pd.DataFrame:
                         - joined["final_binary_nll_target"]
                     ).mean()
                 ),
+                "target_harmful_reduction": float(
+                    (
+                        joined["harmful_update_rate_candidate"]
+                        - joined["harmful_update_rate_target"]
+                    ).mean()
+                )
+                if "harmful_update_rate_candidate" in joined
+                else 0.0,
+                "target_late_harmful_reduction": float(
+                    (
+                        joined["late_harmful_update_rate_candidate"]
+                        - joined["late_harmful_update_rate_target"]
+                    ).mean()
+                )
+                if "late_harmful_update_rate_candidate" in joined
+                else 0.0,
             }
         )
     return pd.DataFrame(rows).sort_values(
-        ["target_accuracy_gain_pp", "target_nll_reduction"],
-        ascending=[False, False],
+        ["task", "regime", "target_accuracy_gain_pp", "target_nll_reduction"],
+        ascending=[True, True, False, False],
     )
 
 
@@ -160,34 +194,37 @@ def render_report(summary: pd.DataFrame, paired: pd.DataFrame, *, target: str) -
         "",
         "## Method Summary",
         "",
-        "| Method | Fidelity | Seeds | Final acc | Final NLL | Binary NLL | Brier |",
-        "|---|---|---:|---:|---:|---:|---:|",
+        "| Task | Regime | Method | Fidelity | Seeds | Accuracy | Loss | Harmful | Late harmful |",
+        "|---|---|---|---|---:|---:|---:|---:|---:|",
     ]
     for _, row in summary.iterrows():
         lines.append(
-            f"| {row['method']} | {row['fidelity']} | {int(row['seeds'])} | "
+            f"| {row['task']} | {row['regime']} | {row['method']} | {row['fidelity']} | "
+            f"{int(row['seeds'])} | "
             f"{100 * row['final_accuracy_mean']:.3f}% | "
             f"{row['final_nll_mean']:.6f} | "
-            f"{row['final_binary_nll_mean']:.6f} | "
-            f"{row['final_brier_mean']:.6f} |"
+            f"{100 * row['harmful_update_rate']:.2f}% | "
+            f"{100 * row['late_harmful_update_rate']:.2f}% |"
         )
     lines.extend(
         [
             "",
             f"## Paired Gains For `{target}`",
             "",
-            "| Opponent | Paired seeds | Acc gain | Acc wins | NLL reduction | NLL wins | Binary NLL reduction |",
-            "|---|---:|---:|---:|---:|---:|---:|",
+            "| Task | Regime | Opponent | Paired seeds | Acc gain | Acc wins | Loss reduction | Loss wins | Harmful reduction | Late harmful reduction |",
+            "|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
     for _, row in paired.iterrows():
         lines.append(
-            f"| {row['method']} | {int(row['paired_seeds'])} | "
+            f"| {row['task']} | {row['regime']} | {row['method']} | "
+            f"{int(row['paired_seeds'])} | "
             f"{row['target_accuracy_gain_pp']:+.3f} pp | "
             f"{int(row['target_accuracy_wins'])}/{int(row['paired_seeds'])} | "
             f"{row['target_nll_reduction']:+.6f} | "
             f"{int(row['target_nll_wins'])}/{int(row['paired_seeds'])} | "
-            f"{row['target_binary_nll_reduction']:+.6f} |"
+            f"{100 * row['target_harmful_reduction']:+.2f} pp | "
+            f"{100 * row['target_late_harmful_reduction']:+.2f} pp |"
         )
     lines.extend(
         [

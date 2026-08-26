@@ -43,7 +43,10 @@ from vastlora.scale import (
 from vastlora.scale.tradeoff import reserved_train_eval_indices
 
 
-LABEL_TEXT = {0: " negative", 1: " positive"}
+DEFAULT_LABEL_TEXTS = {
+    "sst2": [" negative", " positive"],
+    "qnli": [" yes", " no"],
+}
 METHODS = (
     "raw",
     "fedex",
@@ -143,10 +146,11 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
     experiment = config["experiment"]
     calibration_gradient_examples = int(experiment.get("calibration_gradient_examples", 0))
     calibration_gate_examples = int(experiment.get("calibration_gate_examples", 0))
+    monitor_examples = int(experiment.get("monitor_examples", 0))
     shuffled_train = train.shuffle(seed=seed)
-    calibration_total = calibration_gradient_examples + calibration_gate_examples
-    if calibration_total + int(dataset_config["max_train_examples"]) > len(shuffled_train):
-        raise ValueError("calibration plus max_train_examples exceeds available train data")
+    reserved_total = calibration_gradient_examples + calibration_gate_examples + monitor_examples
+    if reserved_total + int(dataset_config["max_train_examples"]) > len(shuffled_train):
+        raise ValueError("reserved calibration/monitor plus max_train_examples exceeds train data")
     calibration_gradient = (
         shuffled_train.select(range(calibration_gradient_examples))
         if calibration_gradient_examples
@@ -162,8 +166,18 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         if calibration_gate_examples
         else None
     )
+    monitor = (
+        shuffled_train.select(
+            range(
+                calibration_gradient_examples + calibration_gate_examples,
+                reserved_total,
+            )
+        )
+        if monitor_examples
+        else None
+    )
     train = shuffled_train.select(
-        range(calibration_total, calibration_total + dataset_config["max_train_examples"])
+        range(reserved_total, reserved_total + dataset_config["max_train_examples"])
     )
 
     label_column = dataset_config["label_column"]
@@ -179,12 +193,11 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
 
     tokenizer, model = _load_model(config)
     gradient_batch = (
-        _make_sentiment_batch(
+        _make_classification_batch(
             model,
             tokenizer,
             calibration_gradient,
-            text_column=dataset_config["text_column"],
-            label_column=label_column,
+            dataset_config=dataset_config,
             max_length=config["model"]["max_length"],
         )
         if calibration_gradient is not None
@@ -212,12 +225,11 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         rank_rtol=experiment["rank_rtol"],
     )
 
-    baseline, baseline_details = evaluate_sentiment(
+    baseline, baseline_details = evaluate_classification(
         model,
         tokenizer,
         validation,
-        text_column=dataset_config["text_column"],
-        label_column=label_column,
+        dataset_config=dataset_config,
         max_length=config["model"]["max_length"],
         batch_size=experiment["eval_batch_size"],
     )
@@ -244,8 +256,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
             partitions[client_id],
             rng=rng,
             active_rank=active_rank,
-            text_column=dataset_config["text_column"],
-            label_column=label_column,
+            dataset_config=dataset_config,
             max_length=config["model"]["max_length"],
             local_steps=experiment["local_steps"],
             gradient_accumulation_steps=experiment["gradient_accumulation_steps"],
@@ -313,8 +324,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                         current_state,
                         innovations,
                         calibration_gate,
-                        text_column=dataset_config["text_column"],
-                        label_column=label_column,
+                        dataset_config=dataset_config,
                         max_length=config["model"]["max_length"],
                         batch_size=experiment["eval_batch_size"],
                         experiment=experiment,
@@ -365,8 +375,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                             filtered,
                             innovations,
                             calibration_gate,
-                            text_column=dataset_config["text_column"],
-                            label_column=label_column,
+                            dataset_config=dataset_config,
                             max_length=config["model"]["max_length"],
                             batch_size=experiment["eval_batch_size"],
                             experiment=experiment,
@@ -409,6 +418,38 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                     left_ranks.append(transported.left_rank)
                     right_ranks.append(transported.right_rank)
 
+        current_monitor_loss = float("nan")
+        accepted_monitor_loss = float("nan")
+        if monitor is not None:
+            load_compact_adapter_state(
+                model,
+                current_state,
+                active_rank=experiment["server_max_rank"],
+                initialize_free_directions=False,
+            )
+            current_monitor_loss = _mean_classification_loss(
+                model,
+                tokenizer,
+                monitor,
+                dataset_config=dataset_config,
+                max_length=config["model"]["max_length"],
+                batch_size=experiment["eval_batch_size"],
+            )
+            load_compact_adapter_state(
+                model,
+                next_state,
+                active_rank=experiment["server_max_rank"],
+                initialize_free_directions=False,
+            )
+            accepted_monitor_loss = _mean_classification_loss(
+                model,
+                tokenizer,
+                monitor,
+                dataset_config=dataset_config,
+                max_length=config["model"]["max_length"],
+                batch_size=experiment["eval_batch_size"],
+            )
+
         server_state = _state_to_cpu(next_state)
         snapshots[event.new_server_version] = server_state
         event_rows.append(
@@ -420,7 +461,23 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                 "arrival_version": event.arrival_version,
                 "staleness": event.staleness,
                 "method": accepted_method,
+                "measured": event_index >= experiment["warmup_returns"],
                 "local_loss": local_loss,
+                "current_loss": current_monitor_loss,
+                "accepted_loss": accepted_monitor_loss,
+                "harmful_update": (
+                    accepted_monitor_loss > current_monitor_loss + 1e-12
+                    if math.isfinite(current_monitor_loss)
+                    and math.isfinite(accepted_monitor_loss)
+                    else False
+                ),
+                "late_harmful_update": (
+                    event.staleness >= int(experiment.get("late_tau", 8))
+                    and accepted_monitor_loss > current_monitor_loss + 1e-12
+                    if math.isfinite(current_monitor_loss)
+                    and math.isfinite(accepted_monitor_loss)
+                    else False
+                ),
                 "freshness": _mean(freshness_values),
                 "rho": _mean(rhos),
                 "residual_scale": _mean(residual_scales),
@@ -446,12 +503,11 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         active_rank=experiment["server_max_rank"],
         initialize_free_directions=False,
     )
-    final, final_details = evaluate_sentiment(
+    final, final_details = evaluate_classification(
         model,
         tokenizer,
         validation,
-        text_column=dataset_config["text_column"],
-        label_column=label_column,
+        dataset_config=dataset_config,
         max_length=config["model"]["max_length"],
         batch_size=experiment["eval_batch_size"],
     )
@@ -479,6 +535,25 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         "binary_nll_change": final["binary_nll"] - baseline["binary_nll"],
         "mean_local_loss": _mean([row["local_loss"] for row in event_rows]),
         "mean_staleness": _mean([row["staleness"] for row in event_rows]),
+        "harmful_update_rate": _mean(
+            [row["harmful_update"] for row in event_rows if row["measured"]]
+        ),
+        "late_harmful_update_rate": _mean(
+            [
+                row["late_harmful_update"]
+                for row in event_rows
+                if row["measured"] and row["staleness"] >= int(experiment.get("late_tau", 8))
+            ]
+        ),
+        "monitor_loss_change": _mean(
+            [
+                row["accepted_loss"] - row["current_loss"]
+                for row in event_rows
+                if row["measured"]
+                and math.isfinite(row["current_loss"])
+                and math.isfinite(row["accepted_loss"])
+            ]
+        ),
         "mean_rho_after_warmup": _mean(
             [row["rho"] for row in event_rows[experiment["warmup_returns"] :]]
         ),
@@ -496,6 +571,8 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         "method": method,
         "seed": seed,
         "model": config["model"]["name"],
+        "task": dataset_config.get("subset", dataset_config["hub_path"]),
+        "regime": experiment.get("regime_name", "default"),
         "git_commit": _git_commit(),
         "config": config,
         "metrics": metrics,
@@ -557,8 +634,7 @@ def _train_client(
     *,
     rng: random.Random,
     active_rank: int,
-    text_column: str,
-    label_column: str,
+    dataset_config: Mapping[str, Any],
     max_length: int,
     local_steps: int,
     gradient_accumulation_steps: int,
@@ -571,6 +647,7 @@ def _train_client(
     optimizer = torch.optim.AdamW(parameters, lr=learning_rate, weight_decay=weight_decay)
     model.train()
     losses: list[float] = []
+    label_column = dataset_config["label_column"]
     for _ in range(local_steps):
         optimizer.zero_grad(set_to_none=True)
         for _ in range(gradient_accumulation_steps):
@@ -578,7 +655,8 @@ def _train_client(
             examples = [dataset[index] for index in selected]
             batch = _collate_examples(
                 tokenizer,
-                [(item[text_column], int(item[label_column])) for item in examples],
+                [(item, int(item[label_column])) for item in examples],
+                dataset_config=dataset_config,
                 max_length=max_length,
             )
             batch = _move_batch(batch, _model_input_device(model))
@@ -595,13 +673,12 @@ def _train_client(
 
 
 @torch.no_grad()
-def evaluate_sentiment(
+def evaluate_classification(
     model,
     tokenizer,
     dataset,
     *,
-    text_column: str,
-    label_column: str,
+    dataset_config: Mapping[str, Any],
     max_length: int,
     batch_size: int,
 ) -> tuple[dict[str, float], list[dict[str, Any]]]:
@@ -616,11 +693,17 @@ def evaluate_sentiment(
     true_eos_nlls: list[float] = []
     detail_rows: list[dict[str, Any]] = []
     device = _model_input_device(model)
-    examples = [(item[text_column], int(item[label_column])) for item in dataset]
+    label_column = dataset_config["label_column"]
+    examples = [(item, int(item[label_column])) for item in dataset]
     for start in range(0, len(examples), batch_size):
         group = examples[start : start + batch_size]
-        candidates = [(text, candidate) for text, _ in group for candidate in (0, 1)]
-        batch = _collate_examples(tokenizer, candidates, max_length=max_length)
+        candidates = [(item, candidate) for item, _ in group for candidate in (0, 1)]
+        batch = _collate_examples(
+            tokenizer,
+            candidates,
+            dataset_config=dataset_config,
+            max_length=max_length,
+        )
         labels = batch["labels"]
         model_inputs = _move_batch(batch, device)
         logits = model(
@@ -645,7 +728,7 @@ def evaluate_sentiment(
         label_scores = label_nll.view(len(group), 2).cpu()
         eos_scores = eos_nll.view(len(group), 2).cpu()
         probabilities = torch.softmax(-scores, dim=1)
-        for offset, (row, label_row, eos_row, probs, (text, true_label)) in enumerate(
+        for offset, (row, label_row, eos_row, probs, (item, true_label)) in enumerate(
             zip(scores, label_scores, eos_scores, probabilities, group)
         ):
             prediction = int(torch.argmin(row).item())
@@ -663,12 +746,13 @@ def evaluate_sentiment(
             detail_rows.append(
                 {
                     "eval_index": start + offset,
-                    "text": text,
+                    "text": _example_text_for_details(item, dataset_config),
+                    "task": dataset_config.get("subset", dataset_config["hub_path"]),
                     "true_label": true_label,
                     "predicted_label": prediction,
                     "is_correct": int(prediction == true_label),
-                    "nll_negative": float(row[0].item()),
-                    "nll_positive": float(row[1].item()),
+                    "nll_label_0": float(row[0].item()),
+                    "nll_label_1": float(row[1].item()),
                     "true_nll": float(row[true_label].item()),
                     "binary_nll": binary_nll,
                     "brier": brier,
@@ -676,8 +760,8 @@ def evaluate_sentiment(
                     "eos_nll": float(eos_row[true_label].item()),
                     "wrong_nll": float(row[wrong_label].item()),
                     "nll_margin": float(row[wrong_label].item() - row[true_label].item()),
-                    "prob_negative": float(probs[0].item()),
-                    "prob_positive": float(probs[1].item()),
+                    "prob_label_0": float(probs[0].item()),
+                    "prob_label_1": float(probs[1].item()),
                     "true_probability": float(probs[true_label].item()),
                     "prediction_confidence": float(probs[prediction].item()),
                 }
@@ -696,31 +780,35 @@ def evaluate_sentiment(
     }, detail_rows
 
 
-def _make_sentiment_batch(
+def _make_classification_batch(
     model,
     tokenizer,
     dataset,
     *,
-    text_column: str,
-    label_column: str,
+    dataset_config: Mapping[str, Any],
     max_length: int,
 ):
     if dataset is None or len(dataset) == 0:
         raise ValueError("calibration dataset must be non-empty")
-    examples = [(item[text_column], int(item[label_column])) for item in dataset]
+    label_column = dataset_config["label_column"]
+    examples = [(item, int(item[label_column])) for item in dataset]
     return _move_batch(
-        _collate_examples(tokenizer, examples, max_length=max_length),
+        _collate_examples(
+            tokenizer,
+            examples,
+            dataset_config=dataset_config,
+            max_length=max_length,
+        ),
         _model_input_device(model),
     )
 
 
-def _per_example_sentiment_losses(
+def _per_example_classification_losses(
     model,
     tokenizer,
     dataset,
     *,
-    text_column: str,
-    label_column: str,
+    dataset_config: Mapping[str, Any],
     max_length: int,
     batch_size: int,
 ) -> torch.Tensor:
@@ -729,11 +817,17 @@ def _per_example_sentiment_losses(
     model.eval()
     values: list[torch.Tensor] = []
     device = _model_input_device(model)
-    examples = [(item[text_column], int(item[label_column])) for item in dataset]
+    label_column = dataset_config["label_column"]
+    examples = [(item, int(item[label_column])) for item in dataset]
     with torch.inference_mode():
         for start in range(0, len(examples), batch_size):
             group = examples[start : start + batch_size]
-            batch = _collate_examples(tokenizer, group, max_length=max_length)
+            batch = _collate_examples(
+                tokenizer,
+                group,
+                dataset_config=dataset_config,
+                max_length=max_length,
+            )
             labels = batch["labels"]
             model_inputs = _move_batch(batch, device)
             logits = model(
@@ -755,6 +849,26 @@ def _per_example_sentiment_losses(
                 .cpu()
             )
     return torch.cat(values)
+
+
+def _mean_classification_loss(
+    model,
+    tokenizer,
+    dataset,
+    *,
+    dataset_config: Mapping[str, Any],
+    max_length: int,
+    batch_size: int,
+) -> float:
+    losses = _per_example_classification_losses(
+        model,
+        tokenizer,
+        dataset,
+        dataset_config=dataset_config,
+        max_length=max_length,
+        batch_size=batch_size,
+    )
+    return float(losses.mean().item())
 
 
 def _aggregate_scaled_updates(
@@ -784,8 +898,7 @@ def _rift_gate_state(
     raw_updates: Mapping[str, CompactSVD],
     calibration_gate,
     *,
-    text_column: str,
-    label_column: str,
+    dataset_config: Mapping[str, Any],
     max_length: int,
     batch_size: int,
     experiment: Mapping[str, Any],
@@ -803,12 +916,11 @@ def _rift_gate_state(
     if bool(experiment.get("rift_include_freshness_fallback", True)):
         candidates.append(("freshness_fallback", freshness, raw_updates))
 
-    current_losses = _per_example_sentiment_losses(
+    current_losses = _per_example_classification_losses(
         model,
         tokenizer,
         calibration_gate,
-        text_column=text_column,
-        label_column=label_column,
+        dataset_config=dataset_config,
         max_length=max_length,
         batch_size=batch_size,
     )
@@ -832,12 +944,11 @@ def _rift_gate_state(
             active_rank=experiment["server_max_rank"],
             initialize_free_directions=False,
         )
-        candidate_losses = _per_example_sentiment_losses(
+        candidate_losses = _per_example_classification_losses(
             model,
             tokenizer,
             calibration_gate,
-            text_column=text_column,
-            label_column=label_column,
+            dataset_config=dataset_config,
             max_length=max_length,
             batch_size=batch_size,
         )
@@ -862,8 +973,7 @@ def _whole_update_gate_state(
     raw_updates: Mapping[str, CompactSVD],
     calibration_gate,
     *,
-    text_column: str,
-    label_column: str,
+    dataset_config: Mapping[str, Any],
     max_length: int,
     batch_size: int,
     experiment: Mapping[str, Any],
@@ -881,12 +991,11 @@ def _whole_update_gate_state(
     )
     if not scales or any(value < 0.0 or value > 1.0 for value in scales):
         raise ValueError("alignfed_calibration_scales must be in [0, 1]")
-    current_losses = _per_example_sentiment_losses(
+    current_losses = _per_example_classification_losses(
         model,
         tokenizer,
         calibration_gate,
-        text_column=text_column,
-        label_column=label_column,
+        dataset_config=dataset_config,
         max_length=max_length,
         batch_size=batch_size,
     )
@@ -910,12 +1019,11 @@ def _whole_update_gate_state(
             active_rank=experiment["server_max_rank"],
             initialize_free_directions=False,
         )
-        candidate_losses = _per_example_sentiment_losses(
+        candidate_losses = _per_example_classification_losses(
             model,
             tokenizer,
             calibration_gate,
-            text_column=text_column,
-            label_column=label_column,
+            dataset_config=dataset_config,
             max_length=max_length,
             batch_size=batch_size,
         )
@@ -931,16 +1039,22 @@ def _whole_update_gate_state(
     return selected_state, selected_updates, selected_scale, selected_delta, selected_route
 
 
-def _collate_examples(tokenizer, examples: Sequence[tuple[str, int]], *, max_length: int):
+def _collate_examples(
+    tokenizer,
+    examples: Sequence[tuple[Mapping[str, Any], int]],
+    *,
+    dataset_config: Mapping[str, Any],
+    max_length: int,
+):
     encoded: list[tuple[list[int], list[int]]] = []
     eos = tokenizer.eos_token or ""
-    for sentence, label in examples:
-        prompt = (
-            "Classify the sentiment of this movie review as negative or positive.\n"
-            f"Review: {sentence}\nSentiment:"
-        )
+    label_texts = _label_texts(dataset_config)
+    for item, label in examples:
+        prompt = _prompt_for_example(item, dataset_config)
         prompt_ids = tokenizer(prompt, add_special_tokens=True)["input_ids"]
-        target_ids = tokenizer(LABEL_TEXT[label] + eos, add_special_tokens=False)["input_ids"]
+        target_ids = tokenizer(label_texts[label] + eos, add_special_tokens=False)[
+            "input_ids"
+        ]
         prompt_budget = max(1, max_length - len(target_ids))
         prompt_ids = prompt_ids[:prompt_budget]
         input_ids = (prompt_ids + target_ids)[:max_length]
@@ -962,6 +1076,59 @@ def _collate_examples(tokenizer, examples: Sequence[tuple[str, int]], *, max_len
         "attention_mask": torch.tensor(attention_rows, dtype=torch.long),
         "labels": torch.tensor(label_rows, dtype=torch.long),
     }
+
+
+def _label_texts(dataset_config: Mapping[str, Any]) -> list[str]:
+    configured = dataset_config.get("label_texts")
+    if configured is not None:
+        if len(configured) != 2:
+            raise ValueError("label_texts must contain exactly two labels")
+        return [str(value) for value in configured]
+    subset = str(dataset_config.get("subset", "")).lower()
+    if subset not in DEFAULT_LABEL_TEXTS:
+        raise ValueError(
+            "dataset.label_texts is required for unsupported binary task "
+            f"{dataset_config.get('subset')!r}"
+        )
+    return DEFAULT_LABEL_TEXTS[subset]
+
+
+def _prompt_for_example(item: Mapping[str, Any], dataset_config: Mapping[str, Any]) -> str:
+    task = str(dataset_config.get("task", dataset_config.get("subset", ""))).lower()
+    if task == "sst2":
+        text_column = dataset_config.get("text_column", "sentence")
+        return (
+            "Classify the sentiment of this movie review as negative or positive.\n"
+            f"Review: {item[text_column]}\nSentiment:"
+        )
+    if task == "qnli":
+        question_column = dataset_config.get("question_column", "question")
+        sentence_column = dataset_config.get("sentence_column", "sentence")
+        return (
+            "Answer whether the sentence contains the answer to the question.\n"
+            f"Question: {item[question_column]}\n"
+            f"Sentence: {item[sentence_column]}\nAnswer:"
+        )
+    template = dataset_config.get("prompt_template")
+    if template is None:
+        raise ValueError(f"unsupported task for prompt construction: {task!r}")
+    return str(template).format(**item)
+
+
+def _example_text_for_details(
+    item: Mapping[str, Any],
+    dataset_config: Mapping[str, Any],
+) -> str:
+    task = str(dataset_config.get("task", dataset_config.get("subset", ""))).lower()
+    if task == "sst2":
+        return str(item[dataset_config.get("text_column", "sentence")])
+    if task == "qnli":
+        return (
+            f"Q: {item[dataset_config.get('question_column', 'question')]} "
+            f"S: {item[dataset_config.get('sentence_column', 'sentence')]}"
+        )
+    text_column = dataset_config.get("text_column")
+    return str(item[text_column]) if text_column is not None else str(dict(item))
 
 
 def _build_clients(experiment: Mapping[str, Any], partitions: Sequence[Sequence[int]]):
@@ -1075,9 +1242,17 @@ def _apply_overrides(config: dict[str, Any], args: argparse.Namespace) -> None:
 
 def _validate_config(config: Mapping[str, Any], method: str) -> None:
     experiment = config["experiment"]
+    dataset = config["dataset"]
     num_clients = experiment["num_clients"]
     if method not in METHODS:
         raise ValueError(f"unsupported method: {method}")
+    task = str(dataset.get("task", dataset.get("subset", ""))).lower()
+    if task == "sst2" and "text_column" not in dataset:
+        raise ValueError("SST-2 config requires text_column")
+    if task == "qnli" and (
+        "question_column" not in dataset or "sentence_column" not in dataset
+    ):
+        raise ValueError("QNLI config requires question_column and sentence_column")
     if experiment.get("partition_mode", "label_shard") not in {"iid", "label_shard"}:
         raise ValueError("partition_mode must be 'iid' or 'label_shard'")
     if len(experiment["client_ranks"]) != num_clients:
@@ -1090,6 +1265,8 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
         raise ValueError("adaptive_max_rank cannot exceed server_max_rank")
     if experiment["warmup_returns"] < 1 or experiment["collected_returns"] < 1:
         raise ValueError("warmup_returns and collected_returns must be positive")
+    if int(experiment.get("monitor_examples", 0)) <= 0:
+        raise ValueError("monitor_examples must be positive to compute harmful metrics")
     if method in {"rift", "spectral_filter"} and int(
         experiment.get("calibration_gradient_examples", 0)
     ) <= 0:
@@ -1121,6 +1298,8 @@ def _dry_run_summary(config: Mapping[str, Any], args: argparse.Namespace) -> dic
         "valid": True,
         "method": args.method,
         "model": config["model"]["name"],
+        "task": config["dataset"].get("task", config["dataset"].get("subset")),
+        "regime": experiment.get("regime_name", "default"),
         "returns": total,
         "mean_staleness": _mean(trace.staleness_values),
         "max_staleness": max(trace.staleness_values),

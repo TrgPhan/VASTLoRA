@@ -108,6 +108,25 @@ def test_persistent_projection_keeps_cross_timescale_common_direction() -> None:
     assert torch.isfinite(result.projected_updates["layer"]).all()
 
 
+def test_persistent_projection_handles_zero_rank_history() -> None:
+    zero = compact_svd(LowRankMatrix(torch.zeros(3, 1), torch.zeros(1, 3)))
+    update = LowRankMatrix(torch.eye(3), torch.eye(3))
+
+    result = persistent_temporal_projection(
+        {"layer": update},
+        {"layer": [zero] * 4},
+        max_rank=2,
+        short_history_size=2,
+        long_history_size=4,
+        overlap_threshold=0.9,
+        reference_decay=0.0,
+    )
+
+    assert result.left_ranks["layer"] == 0
+    assert result.right_ranks["layer"] == 0
+    torch.testing.assert_close(result.projected_updates["layer"], torch.zeros(3, 3))
+
+
 def test_schema_rejects_inconsistent_staleness() -> None:
     row = {
         "run_id": "r",

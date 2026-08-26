@@ -17,7 +17,9 @@ os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
 import pandas as pd
 import torch
+from torch.nn import functional as F
 from datasets import Dataset, load_dataset
+from sklearn.model_selection import train_test_split
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 
@@ -29,7 +31,15 @@ if str(SRC) not in sys.path:
 from vastlora.asyncfl import AsyncEventSimulator, ClientProfile
 from vastlora.data import iid_partition_indices, label_shard_partition_indices
 from vastlora.diagnostics import (
+    PairedGateResult,
+    RankwiseFilterResult,
     analyze_innovation_geometry,
+    dense_state_difference,
+    fedrot_aggregate_diagnostic_state,
+    fedsteer_cached_vector_projection,
+    filter_rankwise_by_gradient,
+    glora_cached_consensus_projection,
+    paired_loss_gate,
     persistent_temporal_projection,
     residual_budget_transport,
     subspace_lattice_transport,
@@ -38,6 +48,7 @@ from vastlora.diagnostics import (
 )
 from vastlora.lora import (
     add_dense_innovation,
+    get_local_factor_snapshots,
     get_local_innovations,
     get_server_adapter_state,
     inject_diagnostic_lora,
@@ -48,7 +59,7 @@ from vastlora.lora import (
     set_server_adapter_state,
     zero_local_adapters,
 )
-from vastlora.lowrank import CompactSVD, compact_svd
+from vastlora.lowrank import CompactSVD, LowRankMatrix, compact_svd
 
 
 def parse_args() -> argparse.Namespace:
@@ -91,7 +102,12 @@ def parse_args() -> argparse.Namespace:
         "--accept-method",
         choices=(
             "raw",
+            "fedex",
+            "fedrot",
             "freshness",
+            "glora_cache",
+            "fedsteer_cache",
+            "alignfed_calibration",
             "projection",
             "projection_left",
             "projection_right",
@@ -99,6 +115,7 @@ def parse_args() -> argparse.Namespace:
             "projection_scaled",
             "residual_budget",
             "risk_switch",
+            "rift",
             "saber",
             "union",
             "lattice",
@@ -194,12 +211,69 @@ def main() -> None:
     tokenized_validation = _tokenize(
         raw[dataset_config["validation_split"]], tokenizer, config
     )
-    eval_indices = _sample_indices(
-        list(range(len(tokenized_validation))),
-        experiment["eval_examples"],
-        experiment["eval_seed"],
+    calibration_gradient_examples = int(
+        experiment.get("calibration_gradient_examples", 0)
     )
+    calibration_gate_examples = int(experiment.get("calibration_gate_examples", 0))
+    calibration_source = str(experiment.get("calibration_source", "validation"))
+    if calibration_source == "train_prefix":
+        calibration_start = int(dataset_config.get("calibration_train_start", 0))
+        federated_start = int(dataset_config.get("federated_train_start", 0))
+        calibration_pool = list(range(calibration_start, federated_start))
+        calibration_labels = [
+            int(raw[dataset_config["train_split"]][index][dataset_config["label_column"]])
+            for index in range(len(tokenized_train))
+        ]
+        gradient_indices, gate_indices = _stratified_sample_groups(
+            calibration_pool,
+            calibration_labels,
+            [calibration_gradient_examples, calibration_gate_examples],
+            seed=experiment["eval_seed"],
+        )
+        calibration_dataset = tokenized_train
+        eval_indices = _sample_indices(
+            list(range(len(tokenized_validation))),
+            int(experiment["eval_examples"]),
+            experiment["eval_seed"],
+        )
+    elif calibration_source == "validation":
+        requested_validation = (
+            calibration_gradient_examples
+            + calibration_gate_examples
+            + int(experiment["eval_examples"])
+        )
+        if requested_validation > len(tokenized_validation):
+            raise ValueError(
+                "calibration gradient, gate, and evaluation splits exceed validation data"
+            )
+        validation_labels = [
+            int(raw[dataset_config["validation_split"]][index][dataset_config["label_column"]])
+            for index in range(len(tokenized_validation))
+        ]
+        gradient_indices, gate_indices, eval_indices = _stratified_sample_groups(
+            list(range(len(tokenized_validation))),
+            validation_labels,
+            [
+                calibration_gradient_examples,
+                calibration_gate_examples,
+                int(experiment["eval_examples"]),
+            ],
+            seed=experiment["eval_seed"],
+        )
+        calibration_dataset = tokenized_validation
+    else:
+        raise ValueError(f"unsupported calibration_source: {calibration_source}")
     eval_batch = _make_batch(tokenized_validation, eval_indices, device)
+    gradient_batch = (
+        _make_batch(calibration_dataset, gradient_indices, device)
+        if gradient_indices
+        else None
+    )
+    gate_batch = (
+        _make_batch(calibration_dataset, gate_indices, device)
+        if gate_indices
+        else None
+    )
     validation_hash = _hash_indices(eval_indices)
     dataset_fingerprint = _dataset_fingerprint(config, raw)
 
@@ -214,6 +288,10 @@ def main() -> None:
                 tokenized_train=tokenized_train,
                 eval_batch=eval_batch,
                 eval_indices=eval_indices,
+                gradient_batch=gradient_batch,
+                gradient_indices=gradient_indices,
+                gate_batch=gate_batch,
+                gate_indices=gate_indices,
                 validation_hash=validation_hash,
                 dataset_fingerprint=dataset_fingerprint,
                 device=device,
@@ -223,7 +301,8 @@ def main() -> None:
             all_frames.append(frame)
             print(
                 f"completed {regime['name']} seed={seed}: rows={len(frame)}, "
-                f"harmful={(frame['raw_update_utility'] < 0).mean():.3f}"
+                "accepted_harmful="
+                f"{(frame['accepted_loss'] > frame['current_loss'] + 1e-12).mean():.3f}"
             )
 
     combined = pd.concat(all_frames, ignore_index=True)
@@ -251,6 +330,10 @@ def run_diagnostic(
     tokenized_train: Dataset,
     eval_batch: Mapping[str, torch.Tensor],
     eval_indices: Sequence[int],
+    gradient_batch: Mapping[str, torch.Tensor] | None,
+    gradient_indices: Sequence[int],
+    gate_batch: Mapping[str, torch.Tensor] | None,
+    gate_indices: Sequence[int],
     validation_hash: str,
     dataset_fingerprint: str,
     device: torch.device,
@@ -260,6 +343,14 @@ def run_diagnostic(
     model_config = config["model"]
     dataset_config = config["dataset"]
     accept_method = str(experiment.get("accept_method", "raw"))
+    rift_enabled = accept_method == "rift" or bool(
+        experiment.get("evaluate_rift_candidate", False)
+    )
+    calibration_enabled = accept_method == "alignfed_calibration"
+    if rift_enabled and (gradient_batch is None or gate_batch is None):
+        raise ValueError("RIFT requires non-empty calibration gradient and gate splits")
+    if calibration_enabled and gate_batch is None:
+        raise ValueError("alignfed_calibration requires a non-empty calibration gate split")
     run_id = f"{regime['name']}_seed{seed}_{accept_method}"
     _set_determinism(seed)
 
@@ -302,6 +393,7 @@ def run_diagnostic(
     trace = AsyncEventSimulator(clients, seed=seed, buffer_size=1).run(max_returns=total_returns)
     snapshots: dict[int, dict[str, torch.Tensor]] = {0: initial_state}
     history: dict[str, list[CompactSVD]] = {name: [] for name in target_names}
+    client_update_cache: dict[str, dict[str, CompactSVD]] = {}
     artifacts: dict[str, Any] = {}
     rows: list[dict[str, Any]] = []
     current_loss: float | None = None
@@ -344,10 +436,12 @@ def run_diagnostic(
             gradient_clip_norm=experiment["gradient_clip_norm"],
         )
         innovations = get_local_innovations(model)
+        final_factors = get_local_factor_snapshots(model, cpu=True)
         compact_updates = {
             name: compact_svd(update, rtol=experiment["rank_rtol"])
             for name, update in innovations.items()
         }
+        client_update_cache[event.client_id] = compact_updates
         zero_local_adapters(model)
         current_state = snapshots[event.arrival_version]
 
@@ -381,6 +475,25 @@ def run_diagnostic(
                 rank_rtol=experiment["rank_rtol"],
             )
             freshness = float(torch.exp(torch.tensor(-experiment["freshness_lambda"] * event.staleness)))
+            if rift_enabled:
+                rift = _build_rift_candidate(
+                    model,
+                    current_state,
+                    innovations,
+                    gradient_batch=gradient_batch,
+                    gate_batch=gate_batch,
+                    experiment=experiment,
+                    freshness=freshness,
+                )
+                rift_state = rift.state
+                rift_updates = rift.updates
+            else:
+                rift = None
+                rift_state = current_state
+                rift_updates = {
+                    name: torch.zeros_like(update.dense())
+                    for name, update in innovations.items()
+                }
             raw_state = add_dense_innovation(
                 current_state,
                 innovations,
@@ -391,6 +504,79 @@ def run_diagnostic(
                 innovations,
                 weight=experiment["server_update_weight"] * freshness,
             )
+            fedrot_weight = min(
+                1.0,
+                float(experiment["server_update_weight"]) * freshness,
+            )
+            fedrot_state = fedrot_aggregate_diagnostic_state(
+                current_state,
+                final_factors,
+                active_rank=event.rank,
+                weight=fedrot_weight,
+                max_rank=max(ranks),
+                align_matrix=str(experiment.get("fedrot_align_matrix", "b")),
+                rank_rtol=float(experiment["rank_rtol"]),
+            )
+            fedrot_updates = {
+                name: update.to(innovations[name].device)
+                for name, update in dense_state_difference(
+                    fedrot_state, current_state
+                ).items()
+            }
+            glora = glora_cached_consensus_projection(
+                innovations,
+                client_update_cache,
+                server_rank=int(
+                    experiment.get("glora_server_rank", experiment["reference_rank"])
+                ),
+            )
+            competitor_freshness = (
+                freshness
+                if bool(experiment.get("competitor_use_freshness", True))
+                else 1.0
+            )
+            glora_updates = {
+                name: competitor_freshness * update
+                for name, update in glora.updates.items()
+            }
+            glora_state = add_dense_innovation(
+                current_state,
+                glora_updates,
+                weight=experiment["server_update_weight"],
+            )
+            fedsteer = fedsteer_cached_vector_projection(
+                innovations,
+                client_update_cache,
+                subspace_rank=int(experiment.get("fedsteer_subspace_rank", 4)),
+                exclude_client=event.client_id,
+            )
+            fedsteer_updates = {
+                name: competitor_freshness * update
+                for name, update in fedsteer.updates.items()
+            }
+            fedsteer_state = add_dense_innovation(
+                current_state,
+                fedsteer_updates,
+                weight=experiment["server_update_weight"],
+            )
+            if calibration_enabled:
+                alignfed = _build_whole_update_gate_candidate(
+                    model,
+                    current_state,
+                    innovations,
+                    gate_batch=gate_batch,
+                    experiment=experiment,
+                    freshness=freshness,
+                )
+                alignfed_state = alignfed.state
+                alignfed_updates = alignfed.updates
+            else:
+                alignfed = None
+                alignfed_state = current_state
+                alignfed_updates = {
+                    name: torch.zeros_like(update.dense())
+                    for name, update in innovations.items()
+                }
             vast_updates = transport_innovations(
                 innovations,
                 geometry.projected_updates,
@@ -458,7 +644,20 @@ def run_diagnostic(
             )
             raw_loss = _loss_for_state(model, raw_state, eval_batch)
             freshness_loss = _loss_for_state(model, freshness_state, eval_batch)
+            fedrot_loss = _loss_for_state(model, fedrot_state, eval_batch)
+            glora_loss = _loss_for_state(model, glora_state, eval_batch)
+            fedsteer_loss = _loss_for_state(model, fedsteer_state, eval_batch)
+            alignfed_loss = (
+                _loss_for_state(model, alignfed_state, eval_batch)
+                if calibration_enabled
+                else float("nan")
+            )
             vast_loss = _loss_for_state(model, vast_state, eval_batch)
+            rift_loss = (
+                _loss_for_state(model, rift_state, eval_batch)
+                if rift_enabled
+                else float("nan")
+            )
             projection_state = add_dense_innovation(
                 current_state,
                 geometry.projected_updates,
@@ -541,7 +740,12 @@ def run_diagnostic(
                 lattice_sq_loss = float("nan")
             candidate_states = {
                 "raw": raw_state,
+                "fedex": raw_state,
+                "fedrot": fedrot_state,
                 "freshness": freshness_state,
+                "glora_cache": glora_state,
+                "fedsteer_cache": fedsteer_state,
+                "alignfed_calibration": alignfed_state,
                 "projection": projection_state,
                 "projection_left": projection_left_state,
                 "projection_right": projection_right_state,
@@ -556,7 +760,12 @@ def run_diagnostic(
             }
             candidate_losses = {
                 "raw": raw_loss,
+                "fedex": raw_loss,
+                "fedrot": fedrot_loss,
                 "freshness": freshness_loss,
+                "glora_cache": glora_loss,
+                "fedsteer_cache": fedsteer_loss,
+                "alignfed_calibration": alignfed_loss,
                 "projection": projection_loss,
                 "projection_left": projection_left_loss,
                 "projection_right": projection_right_loss,
@@ -571,9 +780,14 @@ def run_diagnostic(
             }
             candidate_updates = {
                 "raw": {name: update.dense() for name, update in innovations.items()},
+                "fedex": {name: update.dense() for name, update in innovations.items()},
+                "fedrot": fedrot_updates,
                 "freshness": {
                     name: freshness * update.dense() for name, update in innovations.items()
                 },
+                "glora_cache": glora_updates,
+                "fedsteer_cache": fedsteer_updates,
+                "alignfed_calibration": alignfed_updates,
                 "projection": geometry.projected_updates,
                 "projection_left": geometry.projected_left_updates,
                 "projection_right": geometry.projected_right_updates,
@@ -586,6 +800,10 @@ def run_diagnostic(
                 "lattice_sq": lattice_sq_updates,
                 "vast": vast_updates,
             }
+            if rift_enabled:
+                candidate_states["rift"] = rift_state
+                candidate_losses["rift"] = rift_loss
+                candidate_updates["rift"] = rift_updates
             risk_score = training.grad_norm_first / max(geometry.fro_norm, 1e-12)
             risk_uses_projection = risk_score >= float(
                 experiment.get("risk_threshold", 18.0)
@@ -629,8 +847,15 @@ def run_diagnostic(
                     "rho_right": geometry.rho_right,
                     "rho_two_sided": geometry.rho_two_sided,
                     "raw_update_utility": current_loss - raw_loss,
+                    "fedex_update_utility": current_loss - raw_loss,
+                    "fedrot_update_utility": current_loss - fedrot_loss,
                     "freshness_update_utility": current_loss - freshness_loss,
+                    "glora_cache_update_utility": current_loss - glora_loss,
+                    "fedsteer_cache_update_utility": current_loss - fedsteer_loss,
+                    "alignfed_calibration_update_utility": current_loss
+                    - alignfed_loss,
                     "vast_update_utility": current_loss - vast_loss,
+                    "rift_update_utility": current_loss - rift_loss,
                     "projection_update_utility": current_loss - projection_loss,
                     "projection_left_update_utility": current_loss
                     - projection_left_loss,
@@ -649,8 +874,14 @@ def run_diagnostic(
                     "current_loss": current_loss,
                     "current_accuracy": current_accuracy,
                     "raw_candidate_loss": raw_loss,
+                    "fedex_candidate_loss": raw_loss,
+                    "fedrot_candidate_loss": fedrot_loss,
                     "freshness_candidate_loss": freshness_loss,
+                    "glora_cache_candidate_loss": glora_loss,
+                    "fedsteer_cache_candidate_loss": fedsteer_loss,
+                    "alignfed_calibration_candidate_loss": alignfed_loss,
                     "vast_candidate_loss": vast_loss,
+                    "rift_candidate_loss": rift_loss,
                     "projection_candidate_loss": projection_loss,
                     "projection_left_candidate_loss": projection_left_loss,
                     "projection_right_candidate_loss": projection_right_loss,
@@ -667,6 +898,51 @@ def run_diagnostic(
                     "risk_score": risk_score,
                     "risk_threshold": float(experiment.get("risk_threshold", 18.0)),
                     "risk_uses_projection": risk_uses_projection,
+                    "rift_predicted_gain": (
+                        rift.filter_result.predicted_gain if rift else float("nan")
+                    ),
+                    "rift_retained_rank": (
+                        rift.filter_result.retained_rank if rift else float("nan")
+                    ),
+                    "rift_total_rank": (
+                        rift.filter_result.total_rank if rift else float("nan")
+                    ),
+                    "rift_retained_fraction": (
+                        rift.filter_result.positive_fraction if rift else float("nan")
+                    ),
+                    "rift_step_scale": rift.step_scale if rift else float("nan"),
+                    "rift_gate_mean_delta": (
+                        rift.gate_result.mean_delta if rift else float("nan")
+                    ),
+                    "rift_gate_standard_error": (
+                        rift.gate_result.standard_error if rift else float("nan")
+                    ),
+                    "rift_gate_upper_bound": (
+                        rift.gate_result.upper_bound if rift else float("nan")
+                    ),
+                    "rift_gate_accepted": rift.step_scale > 0.0 if rift else False,
+                    "rift_route": rift.route if rift else "disabled",
+                    "fedrot_interpolation_weight": fedrot_weight,
+                    "glora_consensus_rank_mean": sum(glora.ranks.values())
+                    / len(glora.ranks),
+                    "fedsteer_subspace_rank_mean": sum(fedsteer.ranks.values())
+                    / len(fedsteer.ranks),
+                    "alignfed_step_scale": (
+                        alignfed.step_scale if alignfed else float("nan")
+                    ),
+                    "alignfed_gate_mean_delta": (
+                        alignfed.gate_result.mean_delta
+                        if alignfed
+                        else float("nan")
+                    ),
+                    "alignfed_gate_upper_bound": (
+                        alignfed.gate_result.upper_bound
+                        if alignfed
+                        else float("nan")
+                    ),
+                    "alignfed_gate_accepted": (
+                        alignfed.step_scale > 0.0 if alignfed else False
+                    ),
                     "local_probe_loss_before": training.probe_loss_before,
                     "local_probe_loss_after": training.probe_loss_after,
                     "local_probe_loss_change": training.probe_loss_after
@@ -692,6 +968,10 @@ def run_diagnostic(
                     "update_artifact_id": artifact_id,
                     "validation_split": dataset_config["validation_split"],
                     "validation_indices_sha256": validation_hash,
+                    "calibration_gradient_indices_sha256": _hash_indices(
+                        gradient_indices
+                    ),
+                    "calibration_gate_indices_sha256": _hash_indices(gate_indices),
                     "metric": "cross_entropy_loss",
                     "model_name": model_config["name"],
                     "model_commit": getattr(model.config, "_commit_hash", None) or "unknown",
@@ -725,6 +1005,20 @@ def run_diagnostic(
                     "persistent_right_rank_mean": sum(persistent.right_ranks.values())
                     / len(persistent.right_ranks),
                     "server_update_weight": experiment["server_update_weight"],
+                    "competitor_use_freshness": bool(
+                        experiment.get("competitor_use_freshness", True)
+                    ),
+                    "fedrot_align_matrix": str(
+                        experiment.get("fedrot_align_matrix", "b")
+                    ),
+                    "glora_server_rank": int(
+                        experiment.get(
+                            "glora_server_rank", experiment["reference_rank"]
+                        )
+                    ),
+                    "fedsteer_subspace_rank": int(
+                        experiment.get("fedsteer_subspace_rank", 4)
+                    ),
                     "local_learning_rate": experiment["local_learning_rate"],
                     "local_steps": experiment["local_steps"],
                 }
@@ -771,6 +1065,8 @@ def run_diagnostic(
         "target_names": target_names,
         "partitions": {f"c{index:02d}": values for index, values in enumerate(partitions)},
         "validation_indices": list(eval_indices),
+        "calibration_gradient_indices": list(gradient_indices),
+        "calibration_gate_indices": list(gate_indices),
         "eval_batch": {name: value.cpu() for name, value in eval_batch.items()},
         "snapshots": snapshots,
         "updates": artifacts,
@@ -831,6 +1127,267 @@ def _make_batch(dataset: Dataset, indices: Sequence[int], device: torch.device) 
         name: torch.tensor(value, dtype=torch.long, device=device)
         for name, value in values.items()
     }
+
+
+@dataclass(frozen=True)
+class RIFTCandidate:
+    state: dict[str, torch.Tensor]
+    updates: dict[str, torch.Tensor]
+    filter_result: RankwiseFilterResult
+    gate_result: PairedGateResult
+    step_scale: float
+    route: str
+
+
+@dataclass(frozen=True)
+class WholeUpdateGateCandidate:
+    state: dict[str, torch.Tensor]
+    updates: dict[str, torch.Tensor]
+    gate_result: PairedGateResult
+    step_scale: float
+
+
+def _build_whole_update_gate_candidate(
+    model: torch.nn.Module,
+    current_state: Mapping[str, torch.Tensor],
+    innovations: Mapping[str, LowRankMatrix],
+    *,
+    gate_batch: Mapping[str, torch.Tensor] | None,
+    experiment: Mapping[str, Any],
+    freshness: float,
+) -> WholeUpdateGateCandidate:
+    """Whole-update calibration control for an AlignFed-style async baseline."""
+
+    if gate_batch is None:
+        raise ValueError("calibration gate batch must not be empty")
+    current_losses = _per_example_losses_for_state(model, current_state, gate_batch)
+    z_value = float(
+        experiment.get(
+            "alignfed_gate_z_value", experiment.get("rift_gate_z_value", 1.0)
+        )
+    )
+    max_increase = float(
+        experiment.get(
+            "alignfed_max_mean_increase",
+            experiment.get("rift_max_mean_increase", 0.0),
+        )
+    )
+    selected_state = {
+        name: value.detach().clone() for name, value in current_state.items()
+    }
+    selected_updates = {
+        name: torch.zeros_like(update.dense()) for name, update in innovations.items()
+    }
+    selected_scale = 0.0
+    selected_gate = paired_loss_gate(
+        current_losses,
+        current_losses,
+        z_value=z_value,
+        max_mean_increase=max_increase,
+    )
+    configured = experiment.get("alignfed_step_scales", [1.0, 0.5, 0.25, 0.125])
+    scales = {
+        float(scale) for scale in configured
+    } | {
+        freshness,
+        0.5 * freshness,
+        0.25 * freshness,
+    }
+    scales = {scale for scale in scales if 0.0 < scale <= 1.0}
+    if not scales:
+        raise ValueError("alignfed step scales must include a value in (0, 1]")
+
+    for scale in sorted(scales, reverse=True):
+        updates = {
+            name: scale * innovation.dense()
+            for name, innovation in innovations.items()
+        }
+        state = add_dense_innovation(
+            current_state,
+            updates,
+            weight=float(experiment["server_update_weight"]),
+        )
+        losses = _per_example_losses_for_state(model, state, gate_batch)
+        gate = paired_loss_gate(
+            current_losses,
+            losses,
+            z_value=z_value,
+            max_mean_increase=max_increase,
+        )
+        if gate.accepted and gate.upper_bound < selected_gate.upper_bound:
+            selected_state = state
+            selected_updates = updates
+            selected_scale = scale
+            selected_gate = gate
+
+    return WholeUpdateGateCandidate(
+        state=selected_state,
+        updates=selected_updates,
+        gate_result=selected_gate,
+        step_scale=selected_scale,
+    )
+
+
+def _build_rift_candidate(
+    model: torch.nn.Module,
+    current_state: Mapping[str, torch.Tensor],
+    innovations: Mapping[str, LowRankMatrix],
+    *,
+    gradient_batch: Mapping[str, torch.Tensor] | None,
+    gate_batch: Mapping[str, torch.Tensor] | None,
+    experiment: Mapping[str, Any],
+    freshness: float,
+) -> RIFTCandidate:
+    if gradient_batch is None or gate_batch is None:
+        raise ValueError("RIFT calibration batches must not be empty")
+
+    gradients = _server_adapter_gradients(model, current_state, gradient_batch)
+    configured_max = experiment.get("rift_max_components")
+    filter_result = filter_rankwise_by_gradient(
+        innovations,
+        gradients,
+        minimum_predicted_gain=float(
+            experiment.get("rift_minimum_predicted_gain", 0.0)
+        ),
+        max_components=int(configured_max) if configured_max is not None else None,
+        rank_rtol=float(experiment["rank_rtol"]),
+        keep_nonpositive=bool(
+            experiment.get("rift_keep_nonpositive_components", False)
+        ),
+    )
+    current_gate_losses = _per_example_losses_for_state(
+        model, current_state, gate_batch
+    )
+    zero_updates = {
+        name: torch.zeros_like(update) for name, update in filter_result.updates.items()
+    }
+    selected_state = {
+        name: value.detach().clone() for name, value in current_state.items()
+    }
+    selected_updates = zero_updates
+    selected_scale = 0.0
+    selected_route = "reject"
+    gate_result = paired_loss_gate(
+        current_gate_losses,
+        current_gate_losses,
+        z_value=float(experiment.get("rift_gate_z_value", 1.0)),
+        max_mean_increase=float(experiment.get("rift_max_mean_increase", 0.0)),
+    )
+
+    candidates: list[tuple[str, float, dict[str, torch.Tensor]]] = []
+    if filter_result.retained_rank:
+        step_scales = sorted(
+            {
+                float(value)
+                for value in experiment.get(
+                    "rift_step_scales", [1.0, 0.5, 0.25, 0.125]
+                )
+            },
+            reverse=True,
+        )
+        if not step_scales or any(value <= 0.0 or value > 1.0 for value in step_scales):
+            raise ValueError("RIFT step scales must be in (0, 1]")
+        for step_scale in step_scales:
+            candidates.append(
+                (
+                    "rank_filtered",
+                    step_scale,
+                    {
+                        name: step_scale * update
+                        for name, update in filter_result.updates.items()
+                    },
+                )
+            )
+    if bool(experiment.get("rift_include_freshness_fallback", True)):
+        candidates.append(
+            (
+                "freshness",
+                freshness,
+                {
+                    name: freshness * update.dense()
+                    for name, update in innovations.items()
+                },
+            )
+        )
+
+    for route, step_scale, candidate_updates in candidates:
+        candidate_state = add_dense_innovation(
+            current_state,
+            candidate_updates,
+            weight=float(experiment["server_update_weight"]),
+        )
+        candidate_gate_losses = _per_example_losses_for_state(
+            model, candidate_state, gate_batch
+        )
+        candidate_gate = paired_loss_gate(
+            current_gate_losses,
+            candidate_gate_losses,
+            z_value=float(experiment.get("rift_gate_z_value", 1.0)),
+            max_mean_increase=float(
+                experiment.get("rift_max_mean_increase", 0.0)
+            ),
+        )
+        if bool(experiment.get("rift_disable_gate", False)):
+            selected_state = candidate_state
+            selected_updates = candidate_updates
+            selected_scale = step_scale
+            selected_route = route
+            gate_result = candidate_gate
+            break
+        if (
+            candidate_gate.accepted
+            and candidate_gate.upper_bound < gate_result.upper_bound
+        ):
+            selected_state = candidate_state
+            selected_updates = candidate_updates
+            selected_scale = step_scale
+            selected_route = route
+            gate_result = candidate_gate
+
+    return RIFTCandidate(
+        state=selected_state,
+        updates=selected_updates,
+        filter_result=filter_result,
+        gate_result=gate_result,
+        step_scale=selected_scale,
+        route=selected_route,
+    )
+
+
+def _server_adapter_gradients(
+    model: torch.nn.Module,
+    state: Mapping[str, torch.Tensor],
+    batch: Mapping[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    set_server_adapter_state(model, state)
+    zero_local_adapters(model)
+    modules = named_lora_modules(model)
+    buffers = [module.server_delta for module in modules.values()]
+    for buffer in buffers:
+        buffer.requires_grad_(True)
+    try:
+        model.eval()
+        loss = model(**batch).loss
+        values = torch.autograd.grad(loss, buffers)
+        return {
+            name: value.detach().clone()
+            for name, value in zip(modules, values)
+        }
+    finally:
+        for buffer in buffers:
+            buffer.requires_grad_(False)
+
+
+def _per_example_losses_for_state(
+    model: torch.nn.Module,
+    state: Mapping[str, torch.Tensor],
+    batch: Mapping[str, torch.Tensor],
+) -> torch.Tensor:
+    set_server_adapter_state(model, state)
+    model.eval()
+    with torch.inference_mode():
+        logits = model(**batch).logits
+        return F.cross_entropy(logits, batch["labels"], reduction="none").detach()
 
 
 @dataclass(frozen=True)
@@ -972,6 +1529,40 @@ def _sample_indices(values: Sequence[int], count: int, seed: int) -> list[int]:
     if count <= len(values):
         return rng.sample(list(values), count)
     return [rng.choice(values) for _ in range(count)]
+
+
+def _stratified_sample_groups(
+    indices: Sequence[int],
+    labels: Sequence[int],
+    sizes: Sequence[int],
+    *,
+    seed: int,
+) -> list[list[int]]:
+    if any(size < 0 for size in sizes):
+        raise ValueError("stratified split sizes must be non-negative")
+    if sum(sizes) > len(indices):
+        raise ValueError("stratified split sizes exceed the available pool")
+
+    remaining = list(indices)
+    groups: list[list[int]] = []
+    for offset, size in enumerate(sizes):
+        if size == 0:
+            groups.append([])
+            continue
+        if size == len(remaining):
+            groups.append(remaining)
+            remaining = []
+            continue
+        remaining_labels = [labels[index] for index in remaining]
+        selected, remaining = train_test_split(
+            remaining,
+            train_size=size,
+            random_state=seed + offset,
+            shuffle=True,
+            stratify=remaining_labels,
+        )
+        groups.append(list(selected))
+    return groups
 
 
 def _hash_indices(indices: Sequence[int]) -> str:

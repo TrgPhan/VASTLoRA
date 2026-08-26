@@ -1,0 +1,63 @@
+{
+  "model": {
+    "name": "outputs/models/bert_tiny_sst2_clean",
+    "tokenizer_name": "outputs/models/bert_tiny_sst2_clean",
+    "target_suffixes": ["attention.self.query", "attention.self.value"],
+    "max_length": 64
+  },
+  "dataset": {
+    "hub_path": "nyu-mll/glue",
+    "subset": "sst2",
+    "train_split": "train",
+    "validation_split": "validation",
+    "text_column": "sentence",
+    "label_column": "label",
+    "fingerprint_audit": "outputs/week3/sst2_dataset_audit.json",
+    "calibration_train_start": 5000,
+    "federated_train_start": 5512
+  },
+  "experiment": {
+    "seeds": [17],
+    "num_clients": 10,
+    "warmup_returns": 8,
+    "collected_returns": 20,
+    "local_steps": 1,
+    "local_batch_size": 16,
+    "local_learning_rate": 0.001,
+    "weight_decay": 0.0,
+    "gradient_clip_norm": 1.0,
+    "server_update_weight": 1.0,
+    "lora_scale_per_rank": 1.0,
+    "factor_init": "server",
+    "factor_seed": 2026,
+    "calibration_gradient_examples": 256,
+    "calibration_gate_examples": 256,
+    "calibration_source": "train_prefix",
+    "eval_examples": 872,
+    "eval_seed": 20260825,
+    "history_size": 8,
+    "reference_rank": 2,
+    "reference_decay": 0.1,
+    "reference_singular_power": 0.0,
+    "freshness_lambda": 0.17328679513998632,
+    "residual_freshness_power": 1.0,
+    "rank_rtol": 0.00001,
+    "accept_method": "rift",
+    "rift_minimum_predicted_gain": 0.0,
+    "rift_max_components": null,
+    "rift_step_scales": [1.0, 0.5, 0.25, 0.125],
+    "rift_gate_z_value": 0.0,
+    "rift_max_mean_increase": 0.0,
+    "rift_include_freshness_fallback": false,
+    "regimes": [
+      {
+        "name": "noniid_high_staleness",
+        "partition": "label_shard",
+        "shards_per_client": 2,
+        "ranks": [4, 8, 16, 4, 8, 16, 4, 8, 16, 8],
+        "compute_times": [1.0, 1.2, 1.8, 2.8, 4.0, 6.0, 9.0, 13.0, 18.0, 25.0]
+      }
+    ]
+  },
+  "output_dir": "outputs/week4_rift_pilot_train_calibration"
+}

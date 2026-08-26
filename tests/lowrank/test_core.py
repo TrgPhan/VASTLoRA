@@ -13,6 +13,15 @@ from vastlora.lowrank import (
 )
 
 
+def test_compact_svd_zero_matrix_has_zero_rank() -> None:
+    result = compact_svd(
+        LowRankMatrix(torch.zeros(3, 1), torch.zeros(1, 4))
+    )
+
+    assert result.rank == 0
+    torch.testing.assert_close(result.dense(), torch.zeros(3, 4))
+
+
 def test_compatibility_scores_match_dense_projection_energy() -> None:
     torch.manual_seed(41)
     update = compact_svd(LowRankMatrix(_randn(7, 3), _randn(3, 6)))

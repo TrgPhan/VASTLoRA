@@ -134,8 +134,10 @@ def compact_svd(
     middle = t_left @ t_right.T
 
     p, s, qh = torch.linalg.svd(middle, full_matrices=False)
-    if s.numel() == 0:
+    if s.numel() == 0 or s[0] <= 0:
         keep = torch.zeros(0, dtype=torch.bool, device=s.device)
+        if s.numel():
+            keep = torch.zeros_like(s, dtype=torch.bool)
     else:
         keep = s >= (rtol * s[0])
     if max_rank is not None:

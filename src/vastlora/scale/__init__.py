@@ -7,6 +7,12 @@ from vastlora.scale.coordinator import (
     transport_compact_update,
     zero_compact,
 )
+from vastlora.scale.objective import (
+    ComponentScoreResult,
+    filter_compact_by_scores,
+    scale_compact_update,
+    score_compact_components_with_hooks,
+)
 from vastlora.scale.peft_bridge import (
     FactorSnapshot,
     capture_factor_snapshot,
@@ -21,15 +27,19 @@ from vastlora.scale.peft_bridge import (
 __all__ = [
     "TransportConfig",
     "TransportResult",
+    "ComponentScoreResult",
     "FactorSnapshot",
     "aggregate_compact_state",
     "capture_factor_snapshot",
     "compact_factor_innovations",
     "empty_adapter_state",
     "fedrot_aggregate_factor_state",
+    "filter_compact_by_scores",
     "load_compact_adapter_state",
     "mask_inactive_rank_gradients",
     "named_peft_lora_modules",
+    "scale_compact_update",
+    "score_compact_components_with_hooks",
     "transport_compact_update",
     "zero_compact",
 ]

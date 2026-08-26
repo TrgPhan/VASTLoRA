@@ -33,8 +33,11 @@ from vastlora.scale import (
     compact_factor_innovations,
     empty_adapter_state,
     fedrot_aggregate_factor_state,
+    filter_compact_by_scores,
     load_compact_adapter_state,
     mask_inactive_rank_gradients,
+    scale_compact_update,
+    score_compact_components_with_hooks,
     transport_compact_update,
 )
 from vastlora.scale.tradeoff import reserved_train_eval_indices
@@ -51,6 +54,9 @@ METHODS = (
     "mtip_adaptive",
     "mtip_hybrid",
     "mtip_routed",
+    "rift",
+    "spectral_filter",
+    "alignfed_calibration",
 )
 
 
@@ -134,11 +140,32 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
             raise ValueError("eval_offset must select at least one evaluation example")
         validation = validation.select(range(eval_offset, eval_end))
         train = raw[train_split]
-    train = train.shuffle(seed=seed).select(
-        range(min(dataset_config["max_train_examples"], len(train)))
+    experiment = config["experiment"]
+    calibration_gradient_examples = int(experiment.get("calibration_gradient_examples", 0))
+    calibration_gate_examples = int(experiment.get("calibration_gate_examples", 0))
+    shuffled_train = train.shuffle(seed=seed)
+    calibration_total = calibration_gradient_examples + calibration_gate_examples
+    if calibration_total + int(dataset_config["max_train_examples"]) > len(shuffled_train):
+        raise ValueError("calibration plus max_train_examples exceeds available train data")
+    calibration_gradient = (
+        shuffled_train.select(range(calibration_gradient_examples))
+        if calibration_gradient_examples
+        else None
+    )
+    calibration_gate = (
+        shuffled_train.select(
+            range(
+                calibration_gradient_examples,
+                calibration_gradient_examples + calibration_gate_examples,
+            )
+        )
+        if calibration_gate_examples
+        else None
+    )
+    train = shuffled_train.select(
+        range(calibration_total, calibration_total + dataset_config["max_train_examples"])
     )
 
-    experiment = config["experiment"]
     label_column = dataset_config["label_column"]
     partitions = _build_partitions(
         train,
@@ -151,6 +178,18 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
     trace = AsyncEventSimulator(clients, seed=seed).run(max_returns=total_returns)
 
     tokenizer, model = _load_model(config)
+    gradient_batch = (
+        _make_sentiment_batch(
+            model,
+            tokenizer,
+            calibration_gradient,
+            text_column=dataset_config["text_column"],
+            label_column=label_column,
+            max_length=config["model"]["max_length"],
+        )
+        if calibration_gradient is not None
+        else None
+    )
     server_state = _state_to_cpu(empty_adapter_state(model))
     snapshots: dict[int, dict[str, CompactSVD]] = {0: server_state}
     histories = {
@@ -233,6 +272,12 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         right_ranks: list[int] = []
         freshness_values: list[float] = []
         residual_scales: list[float] = []
+        accepted_scales: list[float] = []
+        retained_ranks: list[int] = []
+        total_ranks: list[int] = []
+        predicted_gains: list[float] = []
+        gate_mean_deltas: list[float] = []
+        accepted_routes: list[str] = []
         if accepted_method == "fedrot":
             next_state = fedrot_aggregate_factor_state(
                 current_state,
@@ -248,8 +293,95 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
             residual_scales.append(1.0)
             left_ranks.append(experiment["server_max_rank"])
             right_ranks.append(experiment["server_max_rank"])
+            accepted_scales.append(1.0)
+            accepted_routes.append("fedrot")
             for name in next_state:
                 histories[name].append(next_state[name])
+        elif accepted_method in {"rift", "spectral_filter", "alignfed_calibration"}:
+            load_compact_adapter_state(
+                model,
+                current_state,
+                active_rank=experiment["server_max_rank"],
+                initialize_free_directions=False,
+            )
+            freshness = math.exp(-transport_config.freshness_lambda * event.staleness)
+            if accepted_method == "alignfed_calibration":
+                next_state, accepted_updates, scale, mean_delta, route = (
+                    _whole_update_gate_state(
+                        model,
+                        tokenizer,
+                        current_state,
+                        innovations,
+                        calibration_gate,
+                        text_column=dataset_config["text_column"],
+                        label_column=label_column,
+                        max_length=config["model"]["max_length"],
+                        batch_size=experiment["eval_batch_size"],
+                        experiment=experiment,
+                        freshness=freshness,
+                    )
+                )
+                accepted_scales.append(scale)
+                gate_mean_deltas.append(mean_delta)
+                accepted_routes.append(route)
+                retained_ranks.append(sum(update.rank for update in accepted_updates.values()))
+                total_ranks.append(sum(update.rank for update in innovations.values()))
+                predicted_gains.append(float("nan"))
+            else:
+                if gradient_batch is None:
+                    raise ValueError(f"{accepted_method} requires calibration_gradient_examples")
+                scores = score_compact_components_with_hooks(
+                    model,
+                    innovations,
+                    gradient_batch,
+                )
+                filtered = filter_compact_by_scores(
+                    innovations,
+                    scores.scores,
+                    minimum_predicted_gain=float(
+                        experiment.get("rift_minimum_predicted_gain", 0.0)
+                    ),
+                    keep_nonpositive=False,
+                )
+                retained_ranks.append(scores.retained_rank)
+                total_ranks.append(scores.total_rank)
+                predicted_gains.append(scores.predicted_gain)
+                if accepted_method == "spectral_filter":
+                    next_state = _aggregate_scaled_updates(
+                        current_state,
+                        filtered,
+                        scale=float(experiment.get("spectral_filter_scale", 1.0)),
+                        experiment=experiment,
+                    )
+                    accepted_updates = filtered
+                    accepted_scales.append(float(experiment.get("spectral_filter_scale", 1.0)))
+                    accepted_routes.append("gradient_filter_no_gate")
+                else:
+                    next_state, accepted_updates, scale, mean_delta, route = (
+                        _rift_gate_state(
+                            model,
+                            tokenizer,
+                            current_state,
+                            filtered,
+                            innovations,
+                            calibration_gate,
+                            text_column=dataset_config["text_column"],
+                            label_column=label_column,
+                            max_length=config["model"]["max_length"],
+                            batch_size=experiment["eval_batch_size"],
+                            experiment=experiment,
+                            freshness=freshness,
+                        )
+                    )
+                    accepted_scales.append(scale)
+                    gate_mean_deltas.append(mean_delta)
+                    accepted_routes.append(route)
+            freshness_values.append(freshness)
+            rhos.append(1.0)
+            residual_scales.append(accepted_scales[-1] if accepted_scales else 0.0)
+            for name, update in accepted_updates.items():
+                if update.rank:
+                    histories[name].append(update)
         else:
             for name, innovation in innovations.items():
                 transported = transport_compact_update(
@@ -271,6 +403,8 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                 rhos.append(transported.rho)
                 freshness_values.append(transported.freshness)
                 residual_scales.append(transported.residual_scale)
+                accepted_scales.append(transported.residual_scale)
+                accepted_routes.append(accepted_method)
                 if transported.left_rank:
                     left_ranks.append(transported.left_rank)
                     right_ranks.append(transported.right_rank)
@@ -290,6 +424,17 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                 "freshness": _mean(freshness_values),
                 "rho": _mean(rhos),
                 "residual_scale": _mean(residual_scales),
+                "accepted_scale": _mean(accepted_scales),
+                "retained_rank": _mean(retained_ranks),
+                "total_rank": _mean(total_ranks),
+                "retained_fraction": (
+                    _mean(retained_ranks) / _mean(total_ranks)
+                    if _mean(total_ranks)
+                    else 0.0
+                ),
+                "predicted_gain": _mean(predicted_gains),
+                "gate_mean_delta": _mean(gate_mean_deltas),
+                "route": ";".join(sorted(set(accepted_routes))),
                 "mean_left_rank": _mean(left_ranks),
                 "mean_right_rank": _mean(right_ranks),
             }
@@ -551,6 +696,241 @@ def evaluate_sentiment(
     }, detail_rows
 
 
+def _make_sentiment_batch(
+    model,
+    tokenizer,
+    dataset,
+    *,
+    text_column: str,
+    label_column: str,
+    max_length: int,
+):
+    if dataset is None or len(dataset) == 0:
+        raise ValueError("calibration dataset must be non-empty")
+    examples = [(item[text_column], int(item[label_column])) for item in dataset]
+    return _move_batch(
+        _collate_examples(tokenizer, examples, max_length=max_length),
+        _model_input_device(model),
+    )
+
+
+def _per_example_sentiment_losses(
+    model,
+    tokenizer,
+    dataset,
+    *,
+    text_column: str,
+    label_column: str,
+    max_length: int,
+    batch_size: int,
+) -> torch.Tensor:
+    if dataset is None or len(dataset) == 0:
+        raise ValueError("calibration gate dataset must be non-empty")
+    model.eval()
+    values: list[torch.Tensor] = []
+    device = _model_input_device(model)
+    examples = [(item[text_column], int(item[label_column])) for item in dataset]
+    with torch.inference_mode():
+        for start in range(0, len(examples), batch_size):
+            group = examples[start : start + batch_size]
+            batch = _collate_examples(tokenizer, group, max_length=max_length)
+            labels = batch["labels"]
+            model_inputs = _move_batch(batch, device)
+            logits = model(
+                input_ids=model_inputs["input_ids"],
+                attention_mask=model_inputs["attention_mask"],
+            ).logits
+            shifted_logits = logits[:, :-1, :].float()
+            shifted_labels = labels[:, 1:].to(logits.device)
+            token_loss = F.cross_entropy(
+                shifted_logits.transpose(1, 2),
+                shifted_labels,
+                ignore_index=-100,
+                reduction="none",
+            )
+            mask = shifted_labels.ne(-100)
+            values.append(
+                ((token_loss * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1))
+                .detach()
+                .cpu()
+            )
+    return torch.cat(values)
+
+
+def _aggregate_scaled_updates(
+    current_state: Mapping[str, CompactSVD],
+    updates: Mapping[str, CompactSVD],
+    *,
+    scale: float,
+    experiment: Mapping[str, Any],
+) -> dict[str, CompactSVD]:
+    return {
+        name: aggregate_compact_state(
+            current_state[name],
+            scale_compact_update(update, scale),
+            weight=experiment["server_update_weight"],
+            max_rank=experiment["server_max_rank"],
+            rank_rtol=experiment["rank_rtol"],
+        )
+        for name, update in updates.items()
+    }
+
+
+def _rift_gate_state(
+    model,
+    tokenizer,
+    current_state: Mapping[str, CompactSVD],
+    filtered_updates: Mapping[str, CompactSVD],
+    raw_updates: Mapping[str, CompactSVD],
+    calibration_gate,
+    *,
+    text_column: str,
+    label_column: str,
+    max_length: int,
+    batch_size: int,
+    experiment: Mapping[str, Any],
+    freshness: float,
+) -> tuple[dict[str, CompactSVD], dict[str, CompactSVD], float, float, str]:
+    candidates: list[tuple[str, float, Mapping[str, CompactSVD]]] = []
+    if sum(update.rank for update in filtered_updates.values()):
+        scales = sorted(
+            {float(value) for value in experiment.get("rift_step_scales", [1.0, 0.5, 0.25, 0.125])},
+            reverse=True,
+        )
+        if not scales or any(value <= 0.0 or value > 1.0 for value in scales):
+            raise ValueError("rift_step_scales must be in (0, 1]")
+        candidates.extend(("rank_filtered", scale, filtered_updates) for scale in scales)
+    if bool(experiment.get("rift_include_freshness_fallback", True)):
+        candidates.append(("freshness_fallback", freshness, raw_updates))
+
+    current_losses = _per_example_sentiment_losses(
+        model,
+        tokenizer,
+        calibration_gate,
+        text_column=text_column,
+        label_column=label_column,
+        max_length=max_length,
+        batch_size=batch_size,
+    )
+    selected_state = {name: value for name, value in current_state.items()}
+    selected_updates = {
+        name: scale_compact_update(update, 0.0) for name, update in raw_updates.items()
+    }
+    selected_scale = 0.0
+    selected_delta = 0.0
+    selected_route = "reject"
+    for route, scale, updates in candidates:
+        candidate_state = _aggregate_scaled_updates(
+            current_state,
+            updates,
+            scale=scale,
+            experiment=experiment,
+        )
+        load_compact_adapter_state(
+            model,
+            candidate_state,
+            active_rank=experiment["server_max_rank"],
+            initialize_free_directions=False,
+        )
+        candidate_losses = _per_example_sentiment_losses(
+            model,
+            tokenizer,
+            calibration_gate,
+            text_column=text_column,
+            label_column=label_column,
+            max_length=max_length,
+            batch_size=batch_size,
+        )
+        mean_delta = float((candidate_losses - current_losses).mean().item())
+        if mean_delta <= float(experiment.get("rift_max_mean_increase", 0.0)) and (
+            selected_route == "reject" or mean_delta < selected_delta
+        ):
+            selected_state = candidate_state
+            selected_updates = {
+                name: scale_compact_update(update, scale) for name, update in updates.items()
+            }
+            selected_scale = scale
+            selected_delta = mean_delta
+            selected_route = route
+    return selected_state, selected_updates, selected_scale, selected_delta, selected_route
+
+
+def _whole_update_gate_state(
+    model,
+    tokenizer,
+    current_state: Mapping[str, CompactSVD],
+    raw_updates: Mapping[str, CompactSVD],
+    calibration_gate,
+    *,
+    text_column: str,
+    label_column: str,
+    max_length: int,
+    batch_size: int,
+    experiment: Mapping[str, Any],
+    freshness: float,
+) -> tuple[dict[str, CompactSVD], dict[str, CompactSVD], float, float, str]:
+    scales = sorted(
+        {
+            float(value)
+            for value in experiment.get(
+                "alignfed_calibration_scales",
+                [1.0, 0.5, 0.25, 0.125, freshness],
+            )
+        },
+        reverse=True,
+    )
+    if not scales or any(value < 0.0 or value > 1.0 for value in scales):
+        raise ValueError("alignfed_calibration_scales must be in [0, 1]")
+    current_losses = _per_example_sentiment_losses(
+        model,
+        tokenizer,
+        calibration_gate,
+        text_column=text_column,
+        label_column=label_column,
+        max_length=max_length,
+        batch_size=batch_size,
+    )
+    selected_state = {name: value for name, value in current_state.items()}
+    selected_updates = {
+        name: scale_compact_update(update, 0.0) for name, update in raw_updates.items()
+    }
+    selected_scale = 0.0
+    selected_delta = 0.0
+    selected_route = "reject"
+    for scale in scales:
+        candidate_state = _aggregate_scaled_updates(
+            current_state,
+            raw_updates,
+            scale=scale,
+            experiment=experiment,
+        )
+        load_compact_adapter_state(
+            model,
+            candidate_state,
+            active_rank=experiment["server_max_rank"],
+            initialize_free_directions=False,
+        )
+        candidate_losses = _per_example_sentiment_losses(
+            model,
+            tokenizer,
+            calibration_gate,
+            text_column=text_column,
+            label_column=label_column,
+            max_length=max_length,
+            batch_size=batch_size,
+        )
+        mean_delta = float((candidate_losses - current_losses).mean().item())
+        if mean_delta <= 0.0 and (selected_route == "reject" or mean_delta < selected_delta):
+            selected_state = candidate_state
+            selected_updates = {
+                name: scale_compact_update(update, scale) for name, update in raw_updates.items()
+            }
+            selected_scale = scale
+            selected_delta = mean_delta
+            selected_route = "whole_update_gate"
+    return selected_state, selected_updates, selected_scale, selected_delta, selected_route
+
+
 def _collate_examples(tokenizer, examples: Sequence[tuple[str, int]], *, max_length: int):
     encoded: list[tuple[list[int], list[int]]] = []
     eos = tokenizer.eos_token or ""
@@ -710,6 +1090,14 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
         raise ValueError("adaptive_max_rank cannot exceed server_max_rank")
     if experiment["warmup_returns"] < 1 or experiment["collected_returns"] < 1:
         raise ValueError("warmup_returns and collected_returns must be positive")
+    if method in {"rift", "spectral_filter"} and int(
+        experiment.get("calibration_gradient_examples", 0)
+    ) <= 0:
+        raise ValueError(f"{method} requires calibration_gradient_examples > 0")
+    if method in {"rift", "alignfed_calibration"} and int(
+        experiment.get("calibration_gate_examples", 0)
+    ) <= 0:
+        raise ValueError(f"{method} requires calibration_gate_examples > 0")
     if not 0.0 <= experiment.get("residual_beta", 0.5) <= 1.0:
         raise ValueError("residual_beta must be between zero and one")
     if experiment.get("residual_staleness_temperature", 1.0) <= 0.0:

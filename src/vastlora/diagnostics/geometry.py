@@ -193,6 +193,8 @@ def persistent_temporal_projection(
 
 def _persistent_basis(short: Tensor, long: Tensor, threshold: float) -> Tensor:
     _, singular_values, vh = torch.linalg.svd(short.T @ long, full_matrices=False)
+    if singular_values.numel() == 0:
+        return long[:, :0]
     keep = singular_values.square() >= threshold
     if not torch.any(keep):
         keep[torch.argmax(singular_values)] = True

@@ -3674,3 +3674,69 @@ fraction of the stale residual, tunes only on a holdout removed from client
 training, and freezes one variant before a five-seed confirmation. See
 `docs/week4/week4_3b_nll_rescue_plan_vi.md`. This update does not upgrade the
 thesis verdict until the new confirmation artifacts exist.
+
+## Week 4 RIFT pivot status - 2026-08-25
+
+The original VAST `rho` hypothesis remains NO-GO and MTIP remains task-specific.
+A new, orthogonal direction now has a **research GO** on the small-model gate:
+RIFT-LoRA (Risk-filtered Intrinsic Federated Transport) treats each singular
+component of an exact stale LoRA innovation as a separate risk unit, keeps
+components with calibration-gradient descent signal, and applies a disjoint
+paired loss gate before accepting the step.
+
+On six held-out SST-2/BERT-tiny seeds in the non-IID/high-staleness regime, RIFT
+achieved 0% harmful late updates (`tau >= 8`), accepted 50.83% of updates, made
+positive loss progress on 6/6 seeds, beat freshness final loss on 6/6 seeds,
+and improved mean accuracy by 1.166 points. It also beat the projection-only
+trajectory on final loss for 6/6 seeds. Three-seed ablations show that neither
+rank filtering nor the gate alone attains the same late-update safety.
+
+The frozen method also passed a cross-task QNLI confirmation on seeds
+131/149/163: mean accuracy was 74.121%, versus 71.517% for freshness, 70.475%
+for exact/FedEx-style innovation, 71.419% for VAST, and 71.615% for
+projection-only. RIFT reduced mean late harmful-update rate to 5.56% while
+accepting 98.33% of updates. Accuracy and loss won 3/3 seeds against all four
+matched baselines.
+
+A 60-measured-return QNLI stress test also ruled out the trivial short-horizon
+explanation. RIFT reached 74.674% mean final accuracy and 0.529083 loss, versus
+70.378% and 0.580396 for freshness, winning both metrics on 3/3 seeds. Its late
+harmful-update rate increased to 10.53% over the longer trajectory but remained
+far below freshness at 50.88%, while accepting 73.33% of updates. The defensible
+claim is therefore risk reduction, not zero harm at every horizon.
+
+The revised thesis question is therefore narrower and safety-oriented:
+
+> Can a calibration-assisted, gauge-invariant rank-wise safety layer reduce the
+> harmful effect of late updates in heterogeneous-rank asynchronous FedLoRA
+> while retaining enough updates to preserve optimization progress?
+
+This is not yet an all-backbone or all-competitor superiority claim. It still
+requires more QNLI seeds, a generative task, calibration-shift tests, faithful
+competitor wrappers, systems-cost reporting, and larger-model validation. Full
+evidence and frozen next gates are in
+`docs/week4/week4_rift_research_go_vi.md`.
+
+## Week 4 RIFT competitor status - 2026-08-26
+
+RIFT has now been compared in the same delayed-arrival simulator with FedEx,
+FedRot, freshness, VAST, temporal projection, a GLoRA-style cached consensus
+adaptation, a FedSteer-style cached vector adaptation, and a whole-update
+calibration control representing the closest usable AlignFed component at
+`buffer_size=1`.
+
+On SST-2 (6 seeds), the calibration control was 0.038 accuracy points above
+RIFT, effectively tied, while RIFT had lower final loss on 6/6 seeds, reduced
+harmful updates from 12.50% to 4.17%, and reduced late harmful updates from
+8.33% to 0%. On QNLI (3 seeds), RIFT led both final accuracy and loss, beating
+the calibration control on both metrics for 3/3 seeds. It also beat FedEx,
+FedRot, projection, VAST, freshness, GLoRA-cache and FedSteer-cache in mean
+accuracy and final loss.
+
+The supported contribution is not universal best accuracy. It is that
+component-level objective filtering adds delayed-update safety beyond exact
+aggregation, factor gauge alignment, cached subspace projection, scalar
+freshness, and whole-update calibration alone. GLoRA, FedSteer and AlignFed
+entries are explicitly matched adaptations, not claims against their complete
+published protocols. Full methods, metrics and remaining gates are documented
+in `docs/week4/week4_rift_competitor_review_vi.md`.

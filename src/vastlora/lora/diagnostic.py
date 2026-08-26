@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 import math
 
 import torch
@@ -11,6 +12,13 @@ from vastlora.lowrank import LowRankMatrix, exact_lora_innovation
 
 
 AdapterState = dict[str, torch.Tensor]
+
+
+@dataclass(frozen=True)
+class DiagnosticFactorSnapshot:
+    a: torch.Tensor
+    b: torch.Tensor
+    scaling: float
 
 
 class DiagnosticLoRALinear(nn.Module):
@@ -203,6 +211,31 @@ def get_local_innovations(model: nn.Module, *, cpu: bool = False) -> dict[str, L
             for name, update in updates.items()
         }
     return updates
+
+
+def get_local_factor_snapshots(
+    model: nn.Module,
+    *,
+    cpu: bool = False,
+) -> dict[str, DiagnosticFactorSnapshot]:
+    snapshots = {
+        name: DiagnosticFactorSnapshot(
+            a=module.lora_a.detach().clone(),
+            b=module.lora_b.detach().clone(),
+            scaling=module.scaling,
+        )
+        for name, module in named_lora_modules(model).items()
+    }
+    if cpu:
+        snapshots = {
+            name: DiagnosticFactorSnapshot(
+                a=value.a.cpu(),
+                b=value.b.cpu(),
+                scaling=value.scaling,
+            )
+            for name, value in snapshots.items()
+        }
+    return snapshots
 
 
 def zero_local_adapters(model: nn.Module) -> None:

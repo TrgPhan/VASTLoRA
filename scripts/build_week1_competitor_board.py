@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -75,7 +75,7 @@ def load_our_runs(summary_dir: Path) -> pd.DataFrame:
     for (regime, method), group in method_summary.groupby(["regime", "method"], sort=True):
         rows.append(
             {
-                "framework": f"VASTLoRA-repro:{method}",
+                "framework": f"RIFTLoRA-repro:{method}",
                 "dataset": "SST-2",
                 "metric": "mean_accuracy",
                 "score": float(group["final_accuracy"].mean()),
@@ -102,7 +102,7 @@ def load_our_runs(summary_dir: Path) -> pd.DataFrame:
         for _, row in regime_summary.iterrows():
             rows.append(
                 {
-                    "framework": f"VASTLoRA-repro:{row['method']}",
+                    "framework": f"RIFTLoRA-repro:{row['method']}",
                     "dataset": "SST-2",
                     "metric": "gain_vs_freshness",
                     "score": float(row["mean_balanced_accuracy_gain_pp"]),
@@ -323,3 +323,4 @@ def _unique_or_mixed(values: pd.Series) -> str:
 
 if __name__ == "__main__":
     main()
+

@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import torch
 
-from vastlora.lowrank import (
+from riftlora.lowrank import (
     CompactSVD,
     LowRankMatrix,
     build_temporal_reference,
@@ -258,3 +258,4 @@ def residual_budget_transport(
         residual_scale = freshness * torch.clamp(trust_ratio, min=0.0, max=1.0)
         transported[name] = projection_scale * projection + residual_scale * residual
     return transported
+

@@ -1,8 +1,8 @@
-import pytest
+﻿import pytest
 import torch
 
-from vastlora.diagnostics import filter_rankwise_by_gradient, paired_loss_gate
-from vastlora.lowrank import LowRankMatrix
+from riftlora.diagnostics import filter_rankwise_by_gradient, paired_loss_gate
+from riftlora.lowrank import LowRankMatrix
 
 
 def test_rankwise_filter_keeps_only_predicted_descent_components() -> None:
@@ -67,3 +67,4 @@ def test_paired_gate_accounts_for_example_level_uncertainty() -> None:
     assert permissive.accepted is True
     assert guarded.accepted is False
     assert guarded.upper_bound > permissive.upper_bound
+

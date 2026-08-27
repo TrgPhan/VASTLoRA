@@ -1,7 +1,7 @@
-import pandas as pd
+﻿import pandas as pd
 import torch
 
-from vastlora.diagnostics import (
+from riftlora.diagnostics import (
     analyze_innovation_geometry,
     residual_budget_transport,
     persistent_temporal_projection,
@@ -9,7 +9,7 @@ from vastlora.diagnostics import (
     transport_innovations,
     validate_diagnostic_dataframe,
 )
-from vastlora.lowrank import LowRankMatrix, compact_svd
+from riftlora.lowrank import LowRankMatrix, compact_svd
 
 
 def test_multilayer_geometry_uses_energy_weighted_compatibility() -> None:
@@ -165,3 +165,4 @@ def test_schema_rejects_inconsistent_staleness() -> None:
     result = validate_diagnostic_dataframe(pd.DataFrame([row]), min_stale_updates=0)
     assert result["valid"] is False
     assert any("tau" in error for error in result["errors"])
+

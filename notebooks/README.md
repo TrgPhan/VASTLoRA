@@ -1,4 +1,4 @@
-# Kaggle notebooks
+﻿# Kaggle notebooks
 
 `kaggle_qwen_3b_mtip_scale.ipynb` runs the memory-bounded Qwen2.5-3B benchmark on
 Kaggle T4x2. Enable Internet and select the T4x2 accelerator before running all
@@ -9,21 +9,21 @@ gate on the full SST-2 validation set.
 
 The notebook clones and checks out runner commit `01e5d63`, records the resolved
 commit in every result, and writes CSV, JSON, Markdown, plots, and a downloadable
-ZIP under `/kaggle/working/vastlora-3b-results`. Updated runs also write
+ZIP under `/kaggle/working/riftlora-3b-results`. Updated runs also write
 per-example NLL debug CSVs and worst-regression tables under
-`/kaggle/working/vastlora-3b-results/summary/nll_debug`.
+`/kaggle/working/riftlora-3b-results/summary/nll_debug`.
 
 The gate reports sequence NLL, label-only NLL, EOS NLL, binary candidate NLL,
 Brier score, balanced accuracy, and paired confidence intervals. Tuning
 artifacts and the frozen target are stored under
-`/kaggle/working/vastlora-3b-results/tuning`.
+`/kaggle/working/riftlora-3b-results/tuning`.
 
 `kaggle_qwen_3b_vast_slice_matrix.ipynb` runs the follow-up Qwen2.5-3B
 slice-matrix benchmark for the revised VAST question. It checks three regimes:
 IID homogeneous rank, IID heterogeneous rank, and non-IID high-staleness
 heterogeneous rank. The notebook compares `raw`, `freshness`, `vast`, and
 `mtip`, then writes paired NLL/calibration/accuracy summaries and a VAST
-hard-slice verdict under `/kaggle/working/vastlora-3b-slice-results/slice_summary`.
+hard-slice verdict under `/kaggle/working/riftlora-3b-slice-results/slice_summary`.
 
 `kaggle_qwen_3b_week1_competitor_board.ipynb` runs the same 3B reproduced
 baseline family (`raw`, `fedex`, `freshness`, `fedrot`, `vast`, `mtip`) and
@@ -33,3 +33,4 @@ FedRot-LoRA, FLoRG, FedEx-LoRA, SDFLoRA, FSLoRA, and AlignFed. `fedex` and
 remaining paper rows stay reference-only unless they have been ported into the
 matched simulator, so the notebook can judge whether the current VAST result is
 strong enough without overclaiming against incompatible paper numbers.
+

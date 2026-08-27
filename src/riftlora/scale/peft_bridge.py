@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 import math
@@ -7,8 +7,8 @@ from typing import Mapping
 import torch
 from torch import nn
 
-from vastlora.lowrank import CompactSVD, LowRankMatrix, compact_svd
-from vastlora.scale.coordinator import zero_compact
+from riftlora.lowrank import CompactSVD, LowRankMatrix, compact_svd
+from riftlora.scale.coordinator import zero_compact
 
 
 @dataclass(frozen=True)
@@ -287,3 +287,4 @@ def _orthogonal_procrustes(source: torch.Tensor, target: torch.Tensor) -> torch.
         return torch.eye(source.shape[1], dtype=source.dtype, device=source.device)
     u, _, vh = torch.linalg.svd(source.T @ target, full_matrices=False)
     return u @ vh
+

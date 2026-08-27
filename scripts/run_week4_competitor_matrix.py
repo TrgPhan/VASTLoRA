@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -46,7 +46,7 @@ def main() -> None:
             with tempfile.NamedTemporaryFile(
                 mode="w",
                 suffix=".json",
-                prefix=f"vastlora_{target_name}_{method}_",
+                prefix=f"riftlora_{target_name}_{method}_",
                 encoding="utf-8",
                 delete=False,
             ) as handle:
@@ -84,3 +84,4 @@ def _output_suffix(method: str) -> str:
 
 if __name__ == "__main__":
     main()
+

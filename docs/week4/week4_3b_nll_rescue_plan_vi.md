@@ -1,4 +1,4 @@
-# Week 4 - Ke hoach cuu NLL cho MTIP tren 3B
+﻿# Week 4 - Ke hoach cuu NLL cho MTIP tren 3B
 
 Ngay cap nhat: 2026-08-25
 
@@ -99,6 +99,7 @@ residual-recovery nay la **NO-GO** va khong tiep tuc tune tren confirmation data
 - `configs/kaggle_3b_mtip_tradeoff.json`
 - `scripts/tune_kaggle_mtip_tradeoff.py`
 - `scripts/run_kaggle_3b.py`
-- `src/vastlora/scale/tradeoff.py`
-- `src/vastlora/scale/reporting.py`
+- `src/riftlora/scale/tradeoff.py`
+- `src/riftlora/scale/reporting.py`
 - `notebooks/kaggle_qwen_3b_mtip_scale.ipynb`
+

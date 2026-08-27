@@ -1,7 +1,7 @@
-import torch
+﻿import torch
 from torch import nn
 
-from vastlora.lora import (
+from riftlora.lora import (
     add_dense_innovation,
     get_local_innovations,
     get_server_adapter_state,
@@ -87,3 +87,4 @@ def test_server_factor_warm_start_uses_exact_factor_difference() -> None:
     innovation = get_local_innovations(model)["query"].dense()
     expected = module.lora_b @ module.lora_a - initial
     torch.testing.assert_close(innovation, expected)
+

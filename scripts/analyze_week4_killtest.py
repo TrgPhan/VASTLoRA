@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -18,7 +18,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from vastlora.diagnostics import (
+from riftlora.diagnostics import (
     analyze_scope,
     decide_gate,
     matched_tau_analysis,
@@ -214,3 +214,4 @@ def _render_report(summary: dict[str, Any], matched: pd.DataFrame) -> str:
 
 if __name__ == "__main__":
     main()
+

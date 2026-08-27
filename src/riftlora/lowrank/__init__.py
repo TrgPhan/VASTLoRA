@@ -1,6 +1,6 @@
-"""Low-rank algebra primitives used by the VAST-LoRA simulator."""
+﻿"""Low-rank algebra primitives used by the VAST-LoRA simulator."""
 
-from vastlora.lowrank.core import (
+from riftlora.lowrank.core import (
     AdaptiveReference,
     CompactSVD,
     LowRankMatrix,
@@ -27,3 +27,4 @@ __all__ = [
     "recompress",
     "weighted_sum",
 ]
+

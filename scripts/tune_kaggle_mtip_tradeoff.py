@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import csv
@@ -16,7 +16,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from vastlora.scale.tradeoff import (
+from riftlora.scale.tradeoff import (
     DEFAULT_TRADEOFF_CANDIDATES as DEFAULT_CANDIDATES,
     select_tradeoff,
 )
@@ -179,3 +179,4 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 if __name__ == "__main__":
     main()
+

@@ -1,10 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import torch
 from torch import nn
 
-from vastlora.lowrank import CompactSVD
-from vastlora.scale.objective import (
+from riftlora.lowrank import CompactSVD
+from riftlora.scale.objective import (
     filter_compact_by_scores,
     score_compact_components_with_hooks,
 )
@@ -54,3 +54,4 @@ def test_component_hook_scores_descent_direction() -> None:
     assert result.retained_rank == 1
     filtered = filter_compact_by_scores({"layer": innovation}, result.scores)
     assert filtered["layer"].rank == 1
+

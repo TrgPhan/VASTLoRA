@@ -1,12 +1,12 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Mapping
 
 import torch
 
-from vastlora.lowrank import CompactSVD
-from vastlora.scale.peft_bridge import named_peft_lora_modules
+from riftlora.lowrank import CompactSVD
+from riftlora.scale.peft_bridge import named_peft_lora_modules
 
 
 @dataclass(frozen=True)
@@ -158,3 +158,4 @@ def _module_device(module: torch.nn.Module) -> torch.device:
     for parameter in module.parameters():
         return parameter.device
     return torch.device("cpu")
+

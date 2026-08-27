@@ -1,19 +1,19 @@
-"""Memory-bounded primitives for scaling VAST-LoRA experiments."""
+﻿"""Memory-bounded primitives for scaling VAST-LoRA experiments."""
 
-from vastlora.scale.coordinator import (
+from riftlora.scale.coordinator import (
     TransportConfig,
     TransportResult,
     aggregate_compact_state,
     transport_compact_update,
     zero_compact,
 )
-from vastlora.scale.objective import (
+from riftlora.scale.objective import (
     ComponentScoreResult,
     filter_compact_by_scores,
     scale_compact_update,
     score_compact_components_with_hooks,
 )
-from vastlora.scale.peft_bridge import (
+from riftlora.scale.peft_bridge import (
     FactorSnapshot,
     capture_factor_snapshot,
     compact_factor_innovations,
@@ -43,3 +43,4 @@ __all__ = [
     "transport_compact_update",
     "zero_compact",
 ]
+

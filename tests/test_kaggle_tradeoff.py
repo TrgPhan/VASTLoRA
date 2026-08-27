@@ -1,4 +1,4 @@
-from vastlora.scale.tradeoff import reserved_train_eval_indices, select_tradeoff
+﻿from riftlora.scale.tradeoff import reserved_train_eval_indices, select_tradeoff
 
 
 def test_reserved_development_holdout_is_deterministic_and_disjoint() -> None:
@@ -53,3 +53,4 @@ def test_tradeoff_selection_rejects_accuracy_only_candidate() -> None:
 
     assert selection["status"] == "DEV_GATE_PASS"
     assert selection["selected"]["name"] == "hybrid_beta010"
+

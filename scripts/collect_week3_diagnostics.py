@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 from collections import Counter
@@ -28,9 +28,9 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from vastlora.asyncfl import AsyncEventSimulator, ClientProfile
-from vastlora.data import iid_partition_indices, label_shard_partition_indices
-from vastlora.diagnostics import (
+from riftlora.asyncfl import AsyncEventSimulator, ClientProfile
+from riftlora.data import iid_partition_indices, label_shard_partition_indices
+from riftlora.diagnostics import (
     PairedGateResult,
     RankwiseFilterResult,
     analyze_innovation_geometry,
@@ -46,7 +46,7 @@ from vastlora.diagnostics import (
     transport_innovations,
     validate_diagnostic_dataframe,
 )
-from vastlora.lora import (
+from riftlora.lora import (
     add_dense_innovation,
     get_local_factor_snapshots,
     get_local_innovations,
@@ -59,7 +59,7 @@ from vastlora.lora import (
     set_server_adapter_state,
     zero_local_adapters,
 )
-from vastlora.lowrank import CompactSVD, LowRankMatrix, compact_svd
+from riftlora.lowrank import CompactSVD, LowRankMatrix, compact_svd
 
 
 def parse_args() -> argparse.Namespace:
@@ -1602,3 +1602,4 @@ def _set_determinism(seed: int) -> None:
 
 if __name__ == "__main__":
     main()
+

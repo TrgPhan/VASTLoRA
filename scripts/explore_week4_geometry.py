@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 from itertools import product
@@ -14,8 +14,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from vastlora.diagnostics import analyze_innovation_geometry, partial_spearman
-from vastlora.lowrank import CompactSVD, LowRankMatrix, compact_svd
+from riftlora.diagnostics import analyze_innovation_geometry, partial_spearman
+from riftlora.lowrank import CompactSVD, LowRankMatrix, compact_svd
 
 
 def parse_args() -> argparse.Namespace:
@@ -139,3 +139,4 @@ def _load_updates(
 
 if __name__ == "__main__":
     main()
+

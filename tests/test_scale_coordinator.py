@@ -1,9 +1,9 @@
-import math
+﻿import math
 
 import torch
 
-from vastlora.lowrank import LowRankMatrix, compact_svd
-from vastlora.scale import (
+from riftlora.lowrank import LowRankMatrix, compact_svd
+from riftlora.scale import (
     TransportConfig,
     aggregate_compact_state,
     transport_compact_update,
@@ -160,3 +160,4 @@ def test_zero_state_can_receive_first_update() -> None:
     aggregated = aggregate_compact_state(server, update, weight=0.5, max_rank=4)
 
     torch.testing.assert_close(aggregated.dense(), 0.5 * update.dense())
+

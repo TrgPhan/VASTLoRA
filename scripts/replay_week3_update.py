@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -18,12 +18,12 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from vastlora.lora import (
+from riftlora.lora import (
     add_dense_innovation,
     inject_diagnostic_lora,
     set_server_adapter_state,
 )
-from vastlora.lowrank import LowRankMatrix
+from riftlora.lowrank import LowRankMatrix
 
 
 def parse_args() -> argparse.Namespace:
@@ -91,3 +91,4 @@ def _loss(model: torch.nn.Module, batch: dict[str, torch.Tensor]) -> float:
 
 if __name__ == "__main__":
     main()
+

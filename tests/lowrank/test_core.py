@@ -1,6 +1,6 @@
-import torch
+﻿import torch
 
-from vastlora.lowrank import (
+from riftlora.lowrank import (
     LowRankMatrix,
     build_adaptive_temporal_reference,
     build_temporal_reference,
@@ -200,3 +200,4 @@ def test_adaptive_temporal_reference_honors_rank_bounds() -> None:
 
     assert reference.left_rank == 3
     assert reference.right_rank == 3
+

@@ -1,12 +1,12 @@
-import torch
+﻿import torch
 
-from vastlora.diagnostics.competitors import (
+from riftlora.diagnostics.competitors import (
     fedrot_aggregate_diagnostic_state,
     fedsteer_cached_vector_projection,
     glora_cached_consensus_projection,
 )
-from vastlora.lora import DiagnosticFactorSnapshot
-from vastlora.lowrank import LowRankMatrix, compact_svd
+from riftlora.lora import DiagnosticFactorSnapshot
+from riftlora.lowrank import LowRankMatrix, compact_svd
 
 
 def test_fedrot_alignment_preserves_equivalent_rotated_factorization() -> None:
@@ -65,3 +65,4 @@ def test_fedsteer_cached_vector_projection_filters_orthogonal_component() -> Non
         result.updates["layer"], torch.tensor([[1.0, 0.0], [0.0, 0.0]])
     )
     assert result.ranks["layer"] == 1
+

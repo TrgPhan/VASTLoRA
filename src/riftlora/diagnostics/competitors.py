@@ -1,12 +1,12 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 import torch
 
-from vastlora.lora import DiagnosticFactorSnapshot
-from vastlora.lowrank import CompactSVD, LowRankMatrix, compact_svd
+from riftlora.lora import DiagnosticFactorSnapshot
+from riftlora.lowrank import CompactSVD, LowRankMatrix, compact_svd
 
 
 @dataclass(frozen=True)
@@ -211,3 +211,4 @@ def _pad_rows(matrix: torch.Tensor, rows: int) -> torch.Tensor:
     return torch.cat(
         [value, torch.zeros((rows - value.shape[0], value.shape[1]))], dim=0
     )
+

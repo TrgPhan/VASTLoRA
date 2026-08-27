@@ -1,10 +1,10 @@
-# VAST-LoRA — Research Feasibility Review & 12-Week Senior Research Guide
+﻿# VAST-LoRA â€” Research Feasibility Review & 12-Week Senior Research Guide
 
 **Working title:**  
 **VAST-LoRA: Version-Aware Subspace Transport for Asynchronous Federated LoRA under Rank Heterogeneity**
 
 **Review date:** 2026-08-10  
-**Target environment:** NVIDIA FLARE (NVFlare) 2.8.x, PyTorch, Hugging Face PEFT/Transformers, 16–24 GB VRAM class GPUs  
+**Target environment:** NVIDIA FLARE (NVFlare) 2.8.x, PyTorch, Hugging Face PEFT/Transformers, 16â€“24 GB VRAM class GPUs  
 **Document purpose:** Turn the current thesis idea into a falsifiable, implementable, publication-oriented research plan rather than a collection of loosely combined methods.
 
 ---
@@ -15,10 +15,10 @@
 
 | Dimension | Assessment | Notes |
 |---|---:|---|
-| Technical feasibility | **8/10** | Feasible if all server operations remain low-rank and main models stay around 0.5B–3B; 7B/8B is optional validation only. |
+| Technical feasibility | **8/10** | Feasible if all server operations remain low-rank and main models stay around 0.5Bâ€“3B; 7B/8B is optional validation only. |
 | 12-week feasibility | **7.5/10** | Feasible for a strong thesis MVP if the scope is frozen early and advanced extensions are not added mid-project. |
-| Novelty potential | **6.5–7.5/10** | The intersection is still interesting, but GLoRA, AlignFed, FedSteer, FedRot-LoRA, FLoRG and 2026 geometry-aware work have already occupied nearby territory. |
-| “Pioneer / first-ever” confidence | **Low–medium** | Do **not** claim pioneer yet. The safe claim is that asynchronous staleness, heterogeneous-rank FedLoRA and gauge-aware geometry have mostly been studied separately. |
+| Novelty potential | **6.5â€“7.5/10** | The intersection is still interesting, but GLoRA, AlignFed, FedSteer, FedRot-LoRA, FLoRG and 2026 geometry-aware work have already occupied nearby territory. |
+| â€œPioneer / first-everâ€ confidence | **Lowâ€“medium** | Do **not** claim pioneer yet. The safe claim is that asynchronous staleness, heterogeneous-rank FedLoRA and gauge-aware geometry have mostly been studied separately. |
 | Paper potential | **Good if the hypothesis is validated** | The empirical observation can itself become a contribution: version age may be a weak proxy for stale-update usefulness, while intrinsic low-rank compatibility can add predictive signal. |
 | Risk | **Medium-high research risk, low-medium engineering risk** | The largest risk is not GPU memory; it is that subspace compatibility may fail to predict useful stale updates. |
 
@@ -112,7 +112,7 @@ $$
 \tau_i = t-v_i.
 $$
 
-A naive asynchronous update treats the client update as merely “old” and often applies a scalar freshness function such as
+A naive asynchronous update treats the client update as merely â€œoldâ€ and often applies a scalar freshness function such as
 
 $$
 \mu_i=e^{-\lambda\tau_i}.
@@ -357,9 +357,9 @@ This prevents almost-null directions from making the principal-angle calculation
 
 ---
 
-# 7. What should represent the “current optimization subspace”?
+# 7. What should represent the â€œcurrent optimization subspaceâ€?
 
-Do **not** automatically use the current global adapter $G_t$ and call it “the optimization direction”.
+Do **not** automatically use the current global adapter $G_t$ and call it â€œthe optimization directionâ€.
 
 The adapter state is a **position** in parameter space; recent accepted innovations are closer to a **directional trajectory**.
 
@@ -611,7 +611,7 @@ This is the central equation of VAST-LoRA.
 
 # 11. Why this operator is attractive
 
-## Property 1 — fresh updates are unchanged
+## Property 1 â€” fresh updates are unchanged
 
 If
 
@@ -633,7 +633,7 @@ $$
 
 So VAST does not distort fresh updates.
 
-## Property 2 — perfectly compatible updates survive even if stale
+## Property 2 â€” perfectly compatible updates survive even if stale
 
 If
 
@@ -657,7 +657,7 @@ for any staleness.
 
 This is the key conceptual distinction from whole-update freshness weighting.
 
-## Property 3 — very stale incompatible directions are suppressed
+## Property 3 â€” very stale incompatible directions are suppressed
 
 As
 
@@ -673,7 +673,7 @@ $$
 \mathcal{T}_t(D_i)\rightarrow D_i^\parallel.
 $$
 
-## Property 4 — exact distortion expression
+## Property 4 â€” exact distortion expression
 
 Because $P_L^tDP_R^t$ is the Frobenius-orthogonal projection onto
 
@@ -703,7 +703,7 @@ $$
 }
 $$
 
-## Property 5 — retained energy
+## Property 5 â€” retained energy
 
 Ignoring the tiny numerical stabilizer $\epsilon$ in the denominator of $\rho_i^t$, the exact retained-energy ratio is
 
@@ -1049,7 +1049,7 @@ sequenceDiagram
 
 ---
 
-# 19. Why this is not simply “GLoRA + AlignFed + FedSteer”
+# 19. Why this is not simply â€œGLoRA + AlignFed + FedSteerâ€
 
 This must be defended explicitly.
 
@@ -1103,7 +1103,7 @@ Both show that alignment/Procrustes ideas are already present in FedLoRA.
 
 Therefore:
 
-> **Do not claim that “alignment of LoRA factors” itself is novel.**
+> **Do not claim that â€œalignment of LoRA factorsâ€ itself is novel.**
 
 The novelty must come from the **asynchronous stale-innovation problem and selective temporal correction**.
 
@@ -1115,19 +1115,19 @@ The novelty must come from the **asynchronous stale-innovation problem and selec
 
 Do not write:
 
-> “We are the first method to align LoRA subspaces.”
+> â€œWe are the first method to align LoRA subspaces.â€
 
 Do not write:
 
-> “We are the first resource-aware heterogeneous-rank FedLoRA method.”
+> â€œWe are the first resource-aware heterogeneous-rank FedLoRA method.â€
 
 Do not write:
 
-> “We are the first asynchronous federated LLM fine-tuning framework.”
+> â€œWe are the first asynchronous federated LLM fine-tuning framework.â€
 
 Do not write:
 
-> “We are the first to solve gauge ambiguity in federated LoRA.”
+> â€œWe are the first to solve gauge ambiguity in federated LoRA.â€
 
 Those claims are already threatened by existing literature.
 
@@ -1141,7 +1141,7 @@ Before paper submission or thesis defense, run the novelty search again.
 
 # 21. The decisive research hypotheses
 
-## H1 — staleness alone is insufficient
+## H1 â€” staleness alone is insufficient
 
 $$
 H_1:
@@ -1150,7 +1150,7 @@ H_1:
 \text{ alone is a weak predictor of stale-update utility.}
 $$
 
-## H2 — intrinsic compatibility adds predictive signal
+## H2 â€” intrinsic compatibility adds predictive signal
 
 $$
 H_2:
@@ -1159,7 +1159,7 @@ H_2:
 \text{ explains additional stale-update utility after controlling for }\tau_i.
 $$
 
-## H3 — selective correction beats whole-update decay
+## H3 â€” selective correction beats whole-update decay
 
 $$
 H_3:
@@ -1175,7 +1175,7 @@ $$
 
 under meaningful asynchronous heterogeneity.
 
-## H4 — benefit increases under joint temporal + rank heterogeneity
+## H4 â€” benefit increases under joint temporal + rank heterogeneity
 
 The VAST improvement should be larger when both:
 
@@ -1191,7 +1191,7 @@ $$
 
 increase.
 
-H4 is secondary; H1–H3 are the core.
+H4 is secondary; H1â€“H3 are the core.
 
 ---
 
@@ -1199,7 +1199,7 @@ H4 is secondary; H1–H3 are the core.
 
 This is the most important research-management recommendation.
 
-## Step A — generate stale innovations
+## Step A â€” generate stale innovations
 
 Train a simple asynchronous FedLoRA system and collect innovations across:
 
@@ -1213,7 +1213,7 @@ $$
 r\in\{4,8,16,32\}.
 $$
 
-## Step B — measure compatibility
+## Step B â€” measure compatibility
 
 For each returned innovation, compute
 
@@ -1221,7 +1221,7 @@ $$
 \rho_i.
 $$
 
-## Step C — measure true post-hoc utility
+## Step C â€” measure true post-hoc utility
 
 For research evaluation only, use a held-out evaluator and measure:
 
@@ -1247,7 +1247,7 @@ $$
 
 The method itself remains data-free; this validation data is only for offline scientific analysis.
 
-## Step D — predictive comparison
+## Step D â€” predictive comparison
 
 Compare:
 
@@ -1308,13 +1308,13 @@ Recent non-federated adapter-composition work has reported that simple angular/o
 
 Therefore, do not assume the VAST hypothesis is true.
 
-This is exactly why Week 3–4 is a **kill-test**, not an implementation sprint.
+This is exactly why Week 3â€“4 is a **kill-test**, not an implementation sprint.
 
 The VAST compatibility score is stronger than a simple angle because it is **energy-weighted and two-sided**, but it still must be experimentally validated.
 
 ---
 
-# 24. Simulation strategy for one 16–24 GB GPU
+# 24. Simulation strategy for one 16â€“24 GB GPU
 
 You do **not** need 20 GPUs to study asynchronous FL.
 
@@ -1393,9 +1393,9 @@ This prevents an incorrect causal claim that a rank-4 LoRA client is automatical
 
 # 26. Recommended model tiers
 
-## Tier A — algorithm development
+## Tier A â€” algorithm development
 
-Use a 0.5B–1.1B class causal LLM.
+Use a 0.5Bâ€“1.1B class causal LLM.
 
 Purpose:
 
@@ -1404,20 +1404,20 @@ Purpose:
 - rapid debugging;
 - matrix-geometry analysis.
 
-## Tier B — primary thesis results
+## Tier B â€” primary thesis results
 
 Use a ~1.5B class LLM, optionally ~3B if runtime allows.
 
 Purpose:
 
 - main non-IID experiments;
-- 10–20 logical clients;
+- 10â€“20 logical clients;
 - rank heterogeneity;
 - staleness sweeps.
 
-## Tier C — stretch validation
+## Tier C â€” stretch validation
 
-3B–7B/8B with QLoRA on a 24 GB GPU only if Weeks 1–10 are already complete.
+3Bâ€“7B/8B with QLoRA on a 24 GB GPU only if Weeks 1â€“10 are already complete.
 
 Do not make thesis success depend on 7B/8B.
 
@@ -1428,7 +1428,7 @@ QLoRA demonstrates that low-bit frozen-backbone training with LoRA dramatically 
 - 4-bit base weights;
 - bf16/fp16 LoRA factors;
 - gradient checkpointing;
-- batch size 1–2;
+- batch size 1â€“2;
 - gradient accumulation;
 - sequence length 512 first, then 1024 if stable;
 - target only `q_proj` and `v_proj` initially.
@@ -1491,7 +1491,7 @@ $$
 
 Do not start with 50 or 100 LLM clients.
 
-### Stage 0 — code sanity
+### Stage 0 â€” code sanity
 
 $$
 N=4.
@@ -1504,7 +1504,7 @@ Purpose:
 - verify innovation exactness;
 - verify stale-event replay.
 
-### Stage 1 — primary hypothesis kill-test
+### Stage 1 â€” primary hypothesis kill-test
 
 $$
 \boxed{N=8}
@@ -1528,7 +1528,7 @@ This isolates the question:
 
 > Does intrinsic current-subspace compatibility explain stale-update utility beyond version age?
 
-### Stage 2 — heterogeneous-rank kill-test
+### Stage 2 â€” heterogeneous-rank kill-test
 
 Still use:
 
@@ -1551,7 +1551,7 @@ Assign:
 
 Rank and latency are deliberately **not perfectly correlated**.
 
-### Stage 3 — main thesis
+### Stage 3 â€” main thesis
 
 If the kill-tests pass:
 
@@ -1567,7 +1567,7 @@ $$
 
 Use heterogeneous ranks and non-IID data.
 
-### Stage 4 — robustness
+### Stage 4 â€” robustness
 
 $$
 N=20.
@@ -1636,7 +1636,7 @@ sequenceDiagram
     S->>S: tau=2, VAST diagnostic/correction
 ```
 
-This simulation is the recommended mechanism for Weeks 2–6.
+This simulation is the recommended mechanism for Weeks 2â€“6.
 
 ## 26A.5 Engineering VRAM budget
 
@@ -1653,11 +1653,11 @@ Expected planning budget for one active Qwen2.5-1.5B client:
 
 | Configuration | Planning VRAM budget |
 |---|---:|
-| QLoRA 4-bit, seq 512, batch 1 | **~4–6 GB** |
-| QLoRA 4-bit, seq 1024 | **~5–8 GB** |
-| QLoRA 4-bit, seq 2048 | **~7–11 GB** |
-| BF16 LoRA, seq 512 | **~6–9 GB** |
-| BF16 LoRA, seq 1024 | **~8–12 GB** |
+| QLoRA 4-bit, seq 512, batch 1 | **~4â€“6 GB** |
+| QLoRA 4-bit, seq 1024 | **~5â€“8 GB** |
+| QLoRA 4-bit, seq 2048 | **~7â€“11 GB** |
+| BF16 LoRA, seq 512 | **~6â€“9 GB** |
+| BF16 LoRA, seq 1024 | **~8â€“12 GB** |
 
 With sequential/multiplexed logical clients:
 
@@ -1739,33 +1739,33 @@ The exact final choice is less important than having:
 
 ---
 
-# 27A. Bảng benchmark cho thí nghiệm thesis 1.5B
+# 27A. Báº£ng benchmark cho thÃ­ nghiá»‡m thesis 1.5B
 
-Phần này đóng băng hướng benchmark sau khi rà lại ma trận đối thủ ở Week 1.
+Pháº§n nÃ y Ä‘Ã³ng bÄƒng hÆ°á»›ng benchmark sau khi rÃ  láº¡i ma tráº­n Ä‘á»‘i thá»§ á»Ÿ Week 1.
 
-Bảng chính của thesis nên là **LLM / instruction**, không phải GLUE. GLUE vẫn hữu ích như một bộ diagnostic rẻ để kiểm tra pipeline, nhưng thesis đang nghiên cứu asynchronous federated LoRA cho LLM adaptation, stale LoRA innovations, rank heterogeneity và low-rank transport. Vì vậy, nếu chỉ có kết quả GLUE thì câu chuyện sẽ hơi xa thesis core.
+Báº£ng chÃ­nh cá»§a thesis nÃªn lÃ  **LLM / instruction**, khÃ´ng pháº£i GLUE. GLUE váº«n há»¯u Ã­ch nhÆ° má»™t bá»™ diagnostic ráº» Ä‘á»ƒ kiá»ƒm tra pipeline, nhÆ°ng thesis Ä‘ang nghiÃªn cá»©u asynchronous federated LoRA cho LLM adaptation, stale LoRA innovations, rank heterogeneity vÃ  low-rank transport. VÃ¬ váº­y, náº¿u chá»‰ cÃ³ káº¿t quáº£ GLUE thÃ¬ cÃ¢u chuyá»‡n sáº½ hÆ¡i xa thesis core.
 
-Template chi tiết nằm ở:
+Template chi tiáº¿t náº±m á»Ÿ:
 
 ```text
-docs/week1/vastlora_1_5b_experiment_tables_vi.md
+docs/week1/riftlora_1_5b_experiment_tables_vi.md
 ```
 
-## Bảng chính: Qwen2.5-1.5B instruction benchmark
+## Báº£ng chÃ­nh: Qwen2.5-1.5B instruction benchmark
 
-Dùng mô hình:
+DÃ¹ng mÃ´ hÃ¬nh:
 
 ```text
 Qwen/Qwen2.5-1.5B-Instruct
 ```
 
-Dataset khuyến nghị:
+Dataset khuyáº¿n nghá»‹:
 
 ```text
 GSM8K, Dolly subset
 ```
 
-Mở rộng nếu đủ thời gian:
+Má»Ÿ rá»™ng náº¿u Ä‘á»§ thá»i gian:
 
 ```text
 BoolQ, PIQA, SIQA, HellaSwag, WinoGrande, ARC-e, ARC-c, OBQA
@@ -1773,58 +1773,58 @@ BoolQ, PIQA, SIQA, HellaSwag, WinoGrande, ARC-e, ARC-c, OBQA
 
 Template:
 
-| Strategy | Code source | GSM8K acc | Dolly score / ROUGE-L | Commonsense avg acc | Mean | Std | Training time | Peak VRAM | Upload MB/round | Ghi chú |
+| Strategy | Code source | GSM8K acc | Dolly score / ROUGE-L | Commonsense avg acc | Mean | Std | Training time | Peak VRAM | Upload MB/round | Ghi chÃº |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
 | Sync FedAvg-LoRA | In-house | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Baseline synchronous |
-| Naive Async-LoRA | In-house | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Async không sửa stale update |
-| Freshness-only Async-LoRA | In-house | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Decay toàn bộ update |
+| Naive Async-LoRA | In-house | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Async khÃ´ng sá»­a stale update |
+| Freshness-only Async-LoRA | In-house | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Decay toÃ n bá»™ update |
 | Buffered Async-LoRA | In-house | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | FedBuff-style |
 | FLoRA / FedIT / Zero-Padding | Public repo | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Heterogeneous-rank baseline |
 | FedEx-LoRA | Public repo | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Exact aggregation baseline |
 | FedRot-LoRA | Public repo | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Rotational alignment baseline |
 | FSLoRA | Public repo | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Sketching/rank-resource baseline |
 | GLoRA-like + freshness | Reimplementation | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Gauge-aware plus whole-update freshness |
-| VAST-LoRA | In-house | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Method chính |
+| VAST-LoRA | In-house | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Method chÃ­nh |
 
-## Bảng phụ: GLUE / NLU diagnostic benchmark
+## Báº£ng phá»¥: GLUE / NLU diagnostic benchmark
 
-Dataset khuyến nghị:
+Dataset khuyáº¿n nghá»‹:
 
 ```text
 SST-2, QNLI, RTE, MNLI
 ```
 
-Chỉ thêm `QQP` nếu còn compute.
+Chá»‰ thÃªm `QQP` náº¿u cÃ²n compute.
 
 Template:
 
-| Strategy | Code source | SST-2 acc | QNLI acc | RTE acc | MNLI acc | QQP acc | Average | Std | Ghi chú |
+| Strategy | Code source | SST-2 acc | QNLI acc | RTE acc | MNLI acc | QQP acc | Average | Std | Ghi chÃº |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---|
 | Sync FedAvg-LoRA | In-house | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Baseline synchronous |
-| Naive Async-LoRA | In-house | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Async không sửa stale update |
-| Freshness-only Async-LoRA | In-house | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Decay toàn bộ update |
+| Naive Async-LoRA | In-house | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Async khÃ´ng sá»­a stale update |
+| Freshness-only Async-LoRA | In-house | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Decay toÃ n bá»™ update |
 | Buffered Async-LoRA | In-house | TBD | TBD | TBD | TBD | TBD | TBD | TBD | FedBuff-style |
 | FLoRA / FedIT / Zero-Padding | Public repo | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Heterogeneous-rank baseline |
 | FedEx-LoRA | Public repo | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Exact aggregation baseline |
 | FedRot-LoRA | Public repo | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Rotational alignment baseline |
 | FSLoRA | Public repo | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Sketching baseline |
 | GLoRA-like + freshness | Reimplementation | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Gauge-aware plus freshness |
-| VAST-LoRA | In-house | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Method chính |
+| VAST-LoRA | In-house | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Method chÃ­nh |
 
-## Độ ưu tiên kéo đối thủ về chạy
+## Äá»™ Æ°u tiÃªn kÃ©o Ä‘á»‘i thá»§ vá» cháº¡y
 
-| Ưu tiên | Strategy | Khả dụng | Quyết định |
+| Æ¯u tiÃªn | Strategy | Kháº£ dá»¥ng | Quyáº¿t Ä‘á»‹nh |
 |---:|---|---|---|
-| 1 | FedEx-LoRA | Có public repository | Kéo về test trước |
-| 2 | FedRot-LoRA | Có public repository | Kéo về test trước |
-| 3 | FLoRA / FedIT / Zero-Padding | Có public repository | Dùng làm hetero-rank baseline |
-| 4 | FSLoRA | Có public repository | Dùng nếu đủ thời gian tích hợp |
-| 5 | GLoRA-like + freshness | Chưa thấy official code rõ | Tự tái hiện lõi |
-| 6 | AlignFed | Chưa thấy official code rõ | Không ưu tiên; dùng calibration và lệch khỏi data-free VAST |
-| 7 | FLoRG | Chưa thấy official code rõ | Chỉ tái hiện nếu còn thời gian |
-| 8 | SDFLoRA / PreLort / HetLoRA | Chưa thấy official code rõ hoặc khó reproduce | Để related work / optional |
+| 1 | FedEx-LoRA | CÃ³ public repository | KÃ©o vá» test trÆ°á»›c |
+| 2 | FedRot-LoRA | CÃ³ public repository | KÃ©o vá» test trÆ°á»›c |
+| 3 | FLoRA / FedIT / Zero-Padding | CÃ³ public repository | DÃ¹ng lÃ m hetero-rank baseline |
+| 4 | FSLoRA | CÃ³ public repository | DÃ¹ng náº¿u Ä‘á»§ thá»i gian tÃ­ch há»£p |
+| 5 | GLoRA-like + freshness | ChÆ°a tháº¥y official code rÃµ | Tá»± tÃ¡i hiá»‡n lÃµi |
+| 6 | AlignFed | ChÆ°a tháº¥y official code rÃµ | KhÃ´ng Æ°u tiÃªn; dÃ¹ng calibration vÃ  lá»‡ch khá»i data-free VAST |
+| 7 | FLoRG | ChÆ°a tháº¥y official code rÃµ | Chá»‰ tÃ¡i hiá»‡n náº¿u cÃ²n thá»i gian |
+| 8 | SDFLoRA / PreLort / HetLoRA | ChÆ°a tháº¥y official code rÃµ hoáº·c khÃ³ reproduce | Äá»ƒ related work / optional |
 
-Kết quả thesis không nên phụ thuộc vào việc reproduce toàn bộ paper chưa public code. Thesis nên phụ thuộc vào việc VAST-LoRA thắng các baseline mạnh có thể chạy được, cộng thêm một baseline GLoRA-like + freshness được tái hiện trung thực trong đúng regime stale và heterogeneous-rank.
+Káº¿t quáº£ thesis khÃ´ng nÃªn phá»¥ thuá»™c vÃ o viá»‡c reproduce toÃ n bá»™ paper chÆ°a public code. Thesis nÃªn phá»¥ thuá»™c vÃ o viá»‡c VAST-LoRA tháº¯ng cÃ¡c baseline máº¡nh cÃ³ thá»ƒ cháº¡y Ä‘Æ°á»£c, cá»™ng thÃªm má»™t baseline GLoRA-like + freshness Ä‘Æ°á»£c tÃ¡i hiá»‡n trung thá»±c trong Ä‘Ãºng regime stale vÃ  heterogeneous-rank.
 
 ---
 
@@ -1874,9 +1874,9 @@ Suggested regimes:
 
 | Regime | Typical $\tau$ |
 |---|---|
-| low | 0–1 |
-| moderate | 2–4 |
-| high | 5–8 |
+| low | 0â€“1 |
+| moderate | 2â€“4 |
+| high | 5â€“8 |
 | extreme | >8 |
 
 Do not hard-code these as universal definitions; they are experimental buckets.
@@ -1887,7 +1887,7 @@ Do not hard-code these as universal definitions; they are experimental buckets.
 
 Do not attempt to reproduce ten papers in 12 weeks.
 
-## Tier 0 — mandatory
+## Tier 0 â€” mandatory
 
 1. **Sync FedAvg-LoRA**
 2. **Naive Async-LoRA**
@@ -1899,7 +1899,7 @@ $$
 
 4. **Buffered Async-LoRA / FedBuff-style**
 
-## Tier 1 — mandatory strong comparisons
+## Tier 1 â€” mandatory strong comparisons
 
 5. **Heterogeneous-rank baseline**  
    Use HetLoRA / a faithful heterogeneous-rank implementation.
@@ -1912,7 +1912,7 @@ $$
 
 If VAST cannot beat this baseline in the targeted regime, the novelty story becomes weak.
 
-## Tier 2 — desirable
+## Tier 2 â€” desirable
 
 8. **AlignFed or an implementation of its cross-version semantic alignment core**  
    Compare accuracy and server cost; note that AlignFed uses a calibration set.
@@ -1929,7 +1929,7 @@ If VAST cannot beat this baseline in the targeted regime, the novelty story beco
 
 A strong thesis needs these.
 
-## A1 — no geometry
+## A1 â€” no geometry
 
 $$
 D_i^{\text{fresh}}
@@ -1937,7 +1937,7 @@ D_i^{\text{fresh}}
 \mu_iD_i.
 $$
 
-## A2 — geometry only
+## A2 â€” geometry only
 
 $$
 D_i^{\text{proj}}
@@ -1945,49 +1945,49 @@ D_i^{\text{proj}}
 D_i^\parallel.
 $$
 
-## A3 — VAST full
+## A3 â€” VAST full
 
 $$
 D_i^\parallel+\mu_iD_i^\perp.
 $$
 
-## A4 — left-only projection
+## A4 â€” left-only projection
 
 $$
 P_L^tD_i.
 $$
 
-## A5 — right-only projection
+## A5 â€” right-only projection
 
 $$
 D_iP_R^t.
 $$
 
-## A6 — two-sided
+## A6 â€” two-sided
 
 $$
 P_L^tD_iP_R^t.
 $$
 
-## A7 — reference history
+## A7 â€” reference history
 
 $$
 H\in\{1,2,4,8\}.
 $$
 
-## A8 — reference rank
+## A8 â€” reference rank
 
 $$
 R_{\text{ref}}\in\{4,8,16,32\}.
 $$
 
-## A9 — buffer size
+## A9 â€” buffer size
 
 $$
 b\in\{1,2,4,8\}.
 $$
 
-## A10 — rank heterogeneity
+## A10 â€” rank heterogeneity
 
 - homogeneous rank;
 - mild heterogeneous;
@@ -2046,7 +2046,7 @@ For the main thesis tables:
 
 - at least 3 random seeds;
 - preferably 5 for small-model diagnostic experiments;
-- report mean ± standard deviation;
+- report mean Â± standard deviation;
 - use paired comparisons when the exact same partition/latency seed is shared across methods.
 
 For the hypothesis phase:
@@ -2068,7 +2068,7 @@ Do not overfocus on p-values with tiny sample counts. Effect size and consistenc
 
 Do not fabricate results. These are the figures you should generate after experiments.
 
-## Figure F1 — utility vs staleness
+## Figure F1 â€” utility vs staleness
 
 Scatter:
 
@@ -2084,7 +2084,7 @@ Question:
 
 > Does version age explain harmfulness cleanly?
 
-## Figure F2 — utility vs compatibility
+## Figure F2 â€” utility vs compatibility
 
 $$
 x=\rho_i,
@@ -2096,13 +2096,13 @@ Question:
 
 > Is geometry informative?
 
-## Figure F3 — matched-staleness analysis
+## Figure F3 â€” matched-staleness analysis
 
 Hold $\tau$ fixed and compare high-$\rho$ vs low-$\rho$.
 
 This is probably the most convincing diagnostic figure.
 
-## Figure F4 — convergence vs virtual wall-clock
+## Figure F4 â€” convergence vs virtual wall-clock
 
 Compare:
 
@@ -2111,15 +2111,15 @@ Compare:
 - GLoRA + freshness;
 - VAST.
 
-## Figure F5 — performance vs staleness severity
+## Figure F5 â€” performance vs staleness severity
 
 Show robustness as $\tau_{\max}$ increases.
 
-## Figure F6 — performance vs rank heterogeneity
+## Figure F6 â€” performance vs rank heterogeneity
 
 Show whether gains increase as rank diversity grows.
 
-## Figure F7 — server overhead
+## Figure F7 â€” server overhead
 
 Correction/recompression time vs client count / rank budget.
 
@@ -2254,15 +2254,15 @@ Then VAST performs:
 
 ```text
 innovation
-    ↓
+    â†“
 compact intrinsic low-rank representation
-    ↓
+    â†“
 staleness tau + current compatibility rho
-    ↓
+    â†“
 selective correction
-    ↓
+    â†“
 buffered aggregation
-    ↓
+    â†“
 global adapter v(t+1)
 ```
 
@@ -2309,11 +2309,11 @@ For the thesis POC:
 Qwen base model
       +
 one approved global VAST adapter
-      ↓
+      â†“
 vLLM
-      ↓
+      â†“
 OpenAI-compatible API
-      ↓
+      â†“
 Web UI
 ```
 
@@ -2321,11 +2321,11 @@ For a more advanced multi-tenant demo:
 
 ```text
 same frozen Qwen base
-      │
-      ├── global adapter
-      ├── company/domain adapter A
-      └── company/domain adapter B
-              ↓
+      â”‚
+      â”œâ”€â”€ global adapter
+      â”œâ”€â”€ company/domain adapter A
+      â””â”€â”€ company/domain adapter B
+              â†“
              vLLM
 ```
 
@@ -2343,17 +2343,17 @@ Use:
 
 ```text
 TRAIN
-  ↓
+  â†“
 global adapter candidate
-  ↓
+  â†“
 offline evaluation
-  ↓
+  â†“
 registry
-  ↓
+  â†“
 approval
-  ↓
+  â†“
 immutable deployment artifact
-  ↓
+  â†“
 vLLM reload / controlled rollout
 ```
 
@@ -2365,8 +2365,8 @@ This gives clean rollback semantics.
 flowchart LR
     P0["Phase 0<br/>Pure PyTorch<br/>Qwen 1.5B kill-test"] -->
     P1["Phase 1<br/>VAST algorithm<br/>8 logical clients"] -->
-    P2["Phase 2<br/>NVFlare Simulator<br/>12–20 clients"] -->
-    P3["Phase 3<br/>NVFlare POC<br/>3–5 real processes/sites"] -->
+    P2["Phase 2<br/>NVFlare Simulator<br/>12â€“20 clients"] -->
+    P3["Phase 3<br/>NVFlare POC<br/>3â€“5 real processes/sites"] -->
     P4["Phase 4<br/>Adapter Registry<br/>promotion workflow"] -->
     P5["Phase 5<br/>vLLM serving<br/>OpenAI-compatible API"] -->
     P6["Phase 6<br/>Web UI + load test<br/>observability"]
@@ -2539,54 +2539,54 @@ In production you can avoid returning `adapter_before` because the server alread
 
 ```text
 vast-lora/
-├── README.md
-├── pyproject.toml
-├── configs/
-│   ├── models/
-│   ├── datasets/
-│   ├── async/
-│   └── experiments/
-├── src/
-│   └── vast_lora/
-│       ├── lowrank/
-│       │   ├── compact_svd.py
-│       │   ├── algebra.py
-│       │   └── recompress.py
-│       ├── method/
-│       │   ├── innovation.py
-│       │   ├── reference.py
-│       │   ├── compatibility.py
-│       │   └── transport.py
-│       ├── simulator/
-│       │   ├── events.py
-│       │   ├── scheduler.py
-│       │   └── latency.py
-│       ├── nvflare/
-│       │   ├── controller.py
-│       │   ├── executor.py
-│       │   └── payloads.py
-│       └── evaluation/
-│           ├── utility.py
-│           ├── metrics.py
-│           └── plots.py
-├── tests/
-│   ├── test_factor_difference.py
-│   ├── test_gauge_invariance.py
-│   ├── test_projection.py
-│   ├── test_recompression.py
-│   └── test_async_versions.py
-└── experiments/
-    ├── 00_sanity/
-    ├── 01_hypothesis/
-    ├── 02_main/
-    └── 03_ablation/
+â”œâ”€â”€ README.md
+â”œâ”€â”€ pyproject.toml
+â”œâ”€â”€ configs/
+â”‚   â”œâ”€â”€ models/
+â”‚   â”œâ”€â”€ datasets/
+â”‚   â”œâ”€â”€ async/
+â”‚   â””â”€â”€ experiments/
+â”œâ”€â”€ src/
+â”‚   â””â”€â”€ vast_lora/
+â”‚       â”œâ”€â”€ lowrank/
+â”‚       â”‚   â”œâ”€â”€ compact_svd.py
+â”‚       â”‚   â”œâ”€â”€ algebra.py
+â”‚       â”‚   â””â”€â”€ recompress.py
+â”‚       â”œâ”€â”€ method/
+â”‚       â”‚   â”œâ”€â”€ innovation.py
+â”‚       â”‚   â”œâ”€â”€ reference.py
+â”‚       â”‚   â”œâ”€â”€ compatibility.py
+â”‚       â”‚   â””â”€â”€ transport.py
+â”‚       â”œâ”€â”€ simulator/
+â”‚       â”‚   â”œâ”€â”€ events.py
+â”‚       â”‚   â”œâ”€â”€ scheduler.py
+â”‚       â”‚   â””â”€â”€ latency.py
+â”‚       â”œâ”€â”€ nvflare/
+â”‚       â”‚   â”œâ”€â”€ controller.py
+â”‚       â”‚   â”œâ”€â”€ executor.py
+â”‚       â”‚   â””â”€â”€ payloads.py
+â”‚       â””â”€â”€ evaluation/
+â”‚           â”œâ”€â”€ utility.py
+â”‚           â”œâ”€â”€ metrics.py
+â”‚           â””â”€â”€ plots.py
+â”œâ”€â”€ tests/
+â”‚   â”œâ”€â”€ test_factor_difference.py
+â”‚   â”œâ”€â”€ test_gauge_invariance.py
+â”‚   â”œâ”€â”€ test_projection.py
+â”‚   â”œâ”€â”€ test_recompression.py
+â”‚   â””â”€â”€ test_async_versions.py
+â””â”€â”€ experiments/
+    â”œâ”€â”€ 00_sanity/
+    â”œâ”€â”€ 01_hypothesis/
+    â”œâ”€â”€ 02_main/
+    â””â”€â”€ 03_ablation/
 ```
 
 ---
 
 # 39. Unit tests that are mandatory
 
-## T1 — factor difference exactness
+## T1 â€” factor difference exactness
 
 Random matrices:
 
@@ -2602,7 +2602,7 @@ $$
 
 for fp32 reference.
 
-## T2 — compact SVD exactness
+## T2 â€” compact SVD exactness
 
 Verify
 
@@ -2612,7 +2612,7 @@ $$
 
 is near numerical tolerance.
 
-## T3 — gauge invariance
+## T3 â€” gauge invariance
 
 Sample invertible $Q$.
 
@@ -2632,7 +2632,7 @@ Verify:
 
 This is a very important test.
 
-## T4 — fresh identity
+## T4 â€” fresh identity
 
 For $\tau=0$:
 
@@ -2640,7 +2640,7 @@ $$
 \mathcal T(D)=D.
 $$
 
-## T5 — reference-contained identity
+## T5 â€” reference-contained identity
 
 Construct $D\in\mathcal S_t$.
 
@@ -2650,7 +2650,7 @@ $$
 \mathcal T(D)=D.
 $$
 
-## T6 — extreme stale projection
+## T6 â€” extreme stale projection
 
 For very large $\tau$:
 
@@ -2658,7 +2658,7 @@ $$
 \mathcal T(D)\approx D^\parallel.
 $$
 
-## T7 — no dense matrix path
+## T7 â€” no dense matrix path
 
 Instrument the code so production VAST never allocates a tensor of shape
 
@@ -2793,7 +2793,7 @@ gantt
 
 # 43. Week-by-week senior researcher plan
 
-## Week 1 — Literature freeze and mathematical sanity
+## Week 1 â€” Literature freeze and mathematical sanity
 
 ### Deliverables
 
@@ -2821,15 +2821,15 @@ gantt
 
 You must be able to answer:
 
-> “What exactly is new relative to GLoRA + freshness?”
+> â€œWhat exactly is new relative to GLoRA + freshness?â€
 
 in less than 30 seconds.
 
 ---
 
-## Cập nhật sau tổng kết Week 1 — hướng triển khai đã siết lại
+## Cáº­p nháº­t sau tá»•ng káº¿t Week 1 â€” hÆ°á»›ng triá»ƒn khai Ä‘Ã£ siáº¿t láº¡i
 
-Phần này **không thay đổi thesis core**. VAST-LoRA vẫn giữ lõi nghiên cứu là:
+Pháº§n nÃ y **khÃ´ng thay Ä‘á»•i thesis core**. VAST-LoRA váº«n giá»¯ lÃµi nghiÃªn cá»©u lÃ :
 
 $$
 \text{stale LoRA innovation}
@@ -2841,7 +2841,7 @@ $$
 \text{selective stale residual attenuation}.
 $$
 
-Điều thay đổi sau Week 1 là **thứ tự triển khai**. Không nên nhảy thẳng vào full VAST hoặc NVFlare. Thứ tự mới nên là:
+Äiá»u thay Ä‘á»•i sau Week 1 lÃ  **thá»© tá»± triá»ƒn khai**. KhÃ´ng nÃªn nháº£y tháº³ng vÃ o full VAST hoáº·c NVFlare. Thá»© tá»± má»›i nÃªn lÃ :
 
 ```text
 low-rank algebra kernel
@@ -2853,41 +2853,41 @@ low-rank algebra kernel
 -> NVFlare integration
 ```
 
-### Quyết định triển khai sau Week 1
+### Quyáº¿t Ä‘á»‹nh triá»ƒn khai sau Week 1
 
-1. **Không triển khai full VAST ngay.** Trước hết phải chứng minh compatibility score có tín hiệu thực nghiệm:
+1. **KhÃ´ng triá»ƒn khai full VAST ngay.** TrÆ°á»›c háº¿t pháº£i chá»©ng minh compatibility score cÃ³ tÃ­n hiá»‡u thá»±c nghiá»‡m:
 
 $$
 \rho_i^t
 $$
 
-có giải thích utility tốt hơn chỉ dùng staleness:
+cÃ³ giáº£i thÃ­ch utility tá»‘t hÆ¡n chá»‰ dÃ¹ng staleness:
 
 $$
 \tau_i
 $$
 
-hay không.
+hay khÃ´ng.
 
-2. **Đối tượng trung tâm của server là innovation, không phải adapter cuối.**
+2. **Äá»‘i tÆ°á»£ng trung tÃ¢m cá»§a server lÃ  innovation, khÃ´ng pháº£i adapter cuá»‘i.**
 
-Server phải xử lý:
+Server pháº£i xá»­ lÃ½:
 
 $$
 D_i = G_{i,E}^{(v_i)} - G_{i,0}^{(v_i)}
 $$
 
-thay vì aggregate trực tiếp:
+thay vÃ¬ aggregate trá»±c tiáº¿p:
 
 $$
 G_{i,E}^{(v_i)}.
 $$
 
-Lý do: $G_{i,0}^{(v_i)}$ đã là tri thức server gửi cho client ở dispatch version; nếu aggregate lại toàn bộ $G_{i,E}^{(v_i)}$ thì dễ double count.
+LÃ½ do: $G_{i,0}^{(v_i)}$ Ä‘Ã£ lÃ  tri thá»©c server gá»­i cho client á»Ÿ dispatch version; náº¿u aggregate láº¡i toÃ n bá»™ $G_{i,E}^{(v_i)}$ thÃ¬ dá»… double count.
 
-3. **Module đầu tiên cần chắc là `lowrank/`.**
+3. **Module Ä‘áº§u tiÃªn cáº§n cháº¯c lÃ  `lowrank/`.**
 
-Các hàm ưu tiên:
+CÃ¡c hÃ m Æ°u tiÃªn:
 
 - exact innovation factorization;
 - compact QR/SVD;
@@ -2896,21 +2896,21 @@ Các hàm ưu tiên:
 - projector/reference-subspace builder;
 - dense fp32 oracle tests.
 
-Nếu phần này sai, VAST sẽ sai âm thầm dù training vẫn chạy.
+Náº¿u pháº§n nÃ y sai, VAST sáº½ sai Ã¢m tháº§m dÃ¹ training váº«n cháº¡y.
 
-4. **Pure PyTorch simulator đi trước NVFlare.**
+4. **Pure PyTorch simulator Ä‘i trÆ°á»›c NVFlare.**
 
-Trong giai đoạn đầu, biến nghiên cứu chính là:
+Trong giai Ä‘oáº¡n Ä‘áº§u, biáº¿n nghiÃªn cá»©u chÃ­nh lÃ :
 
 $$
 \tau_i,\quad \rho_i^t,\quad u_i.
 $$
 
-Do đó cần simulator dễ kiểm soát version, staleness, rank và latency hơn là hệ thống FL thật. NVFlare chuyển sang sau khi kill-test cho thấy hướng này đáng triển khai.
+Do Ä‘Ã³ cáº§n simulator dá»… kiá»ƒm soÃ¡t version, staleness, rank vÃ  latency hÆ¡n lÃ  há»‡ thá»‘ng FL tháº­t. NVFlare chuyá»ƒn sang sau khi kill-test cho tháº¥y hÆ°á»›ng nÃ y Ä‘Ã¡ng triá»ƒn khai.
 
-5. **Baseline bắt buộc phải mạnh hơn naive Async-LoRA.**
+5. **Baseline báº¯t buá»™c pháº£i máº¡nh hÆ¡n naive Async-LoRA.**
 
-Tối thiểu cần có:
+Tá»‘i thiá»ƒu cáº§n cÃ³:
 
 - Sync FedAvg-LoRA;
 - Naive Async-LoRA;
@@ -2920,13 +2920,13 @@ Tối thiểu cần có:
 - GLoRA-like gauge-aware aggregation;
 - GLoRA-like + freshness.
 
-6. **Không thêm module phụ vào MVP.**
+6. **KhÃ´ng thÃªm module phá»¥ vÃ o MVP.**
 
-Các phần như dynamic rank scheduler, personalization, fairness, differential privacy, secure aggregation, unlearning và client routing vẫn để ngoài thesis core. Chúng chỉ nên xuất hiện trong phần limitation hoặc future work.
+CÃ¡c pháº§n nhÆ° dynamic rank scheduler, personalization, fairness, differential privacy, secure aggregation, unlearning vÃ  client routing váº«n Ä‘á»ƒ ngoÃ i thesis core. ChÃºng chá»‰ nÃªn xuáº¥t hiá»‡n trong pháº§n limitation hoáº·c future work.
 
-### Công thức định hướng vẫn giữ nguyên
+### CÃ´ng thá»©c Ä‘á»‹nh hÆ°á»›ng váº«n giá»¯ nguyÃªn
 
-VAST vẫn sửa update theo:
+VAST váº«n sá»­a update theo:
 
 $$
 \mathcal{T}_t(D_i)
@@ -2936,7 +2936,7 @@ D_i^\parallel+\mu_iD_i^\perp,
 \mu_i=e^{-\lambda\tau_i}.
 $$
 
-Tương đương:
+TÆ°Æ¡ng Ä‘Æ°Æ¡ng:
 
 $$
 \mathcal{T}_t(D_i)
@@ -2944,13 +2944,13 @@ $$
 \mu_iD_i+(1-\mu_i)D_i^\parallel.
 $$
 
-Đây vẫn là central equation của thesis. Week 1 chỉ thay đổi **khi nào** triển khai nó, không thay đổi **nó là gì**.
+ÄÃ¢y váº«n lÃ  central equation cá»§a thesis. Week 1 chá»‰ thay Ä‘á»•i **khi nÃ o** triá»ƒn khai nÃ³, khÃ´ng thay Ä‘á»•i **nÃ³ lÃ  gÃ¬**.
 
 ---
 
-## Week 2 — Low-rank algebra foundation + reproducible async event simulator
+## Week 2 â€” Low-rank algebra foundation + reproducible async event simulator
 
-### Cần xây dựng
+### Cáº§n xÃ¢y dá»±ng
 
 - exact innovation factorization;
 - compact QR/SVD against dense fp32 oracle;
@@ -2962,15 +2962,15 @@ $$
 - latency profiles;
 - buffer size control.
 
-### Chưa dùng NVFlare ở giai đoạn này
+### ChÆ°a dÃ¹ng NVFlare á»Ÿ giai Ä‘oáº¡n nÃ y
 
-Simulator nên cho phép chạy 20–50 logical clients với chi phí thấp.
+Simulator nÃªn cho phÃ©p cháº¡y 20â€“50 logical clients vá»›i chi phÃ­ tháº¥p.
 
-NVFlare hữu ích ở giai đoạn sau, nhưng Week 2 cần ưu tiên correctness của phần toán và stale-event semantics có thể tái lập.
+NVFlare há»¯u Ã­ch á»Ÿ giai Ä‘oáº¡n sau, nhÆ°ng Week 2 cáº§n Æ°u tiÃªn correctness cá»§a pháº§n toÃ¡n vÃ  stale-event semantics cÃ³ thá»ƒ tÃ¡i láº­p.
 
-### Tiêu chí hoàn thành
+### TiÃªu chÃ­ hoÃ n thÃ nh
 
-Chạy lại với cùng seed phải tạo ra kết quả giống nhau:
+Cháº¡y láº¡i vá»›i cÃ¹ng seed pháº£i táº¡o ra káº¿t quáº£ giá»‘ng nhau:
 
 - dense-oracle low-rank test results;
 - dispatch versions;
@@ -2980,7 +2980,7 @@ Chạy lại với cùng seed phải tạo ra kết quả giống nhau:
 
 ---
 
-## Week 3 — Diagnostic data collection
+## Week 3 â€” Diagnostic data collection
 
 Do not implement full VAST.
 
@@ -3010,7 +3010,7 @@ A clean dataframe where every stale update can be independently replayed against
 
 ---
 
-## Week 4 — Kill-test / GO-NO-GO gate
+## Week 4 â€” Kill-test / GO-NO-GO gate
 
 Run:
 
@@ -3038,9 +3038,9 @@ Pivot before spending time on NVFlare integration.
 
 ---
 
-## Week 5 — Gia cố low-rank algebra kernel
+## Week 5 â€” Gia cá»‘ low-rank algebra kernel
 
-Đến thời điểm này, low-rank kernel nên đã có từ Week 2. Week 5 dùng để gia cố nó thành backend tái sử dụng cho VAST:
+Äáº¿n thá»i Ä‘iá»ƒm nÃ y, low-rank kernel nÃªn Ä‘Ã£ cÃ³ tá»« Week 2. Week 5 dÃ¹ng Ä‘á»ƒ gia cá»‘ nÃ³ thÃ nh backend tÃ¡i sá»­ dá»¥ng cho VAST:
 
 - exact innovation factorization;
 - compact QR/SVD;
@@ -3055,7 +3055,7 @@ All algebra tests pass against a dense fp32 oracle on small random matrices.
 
 ---
 
-## Week 6 — VAST-P / VAST core
+## Week 6 â€” VAST-P / VAST core
 
 Implement first:
 
@@ -3081,7 +3081,7 @@ On synthetic stale scenarios, VAST is numerically stable and does not increase l
 
 ---
 
-## Week 7 — NVFlare integration
+## Week 7 â€” NVFlare integration
 
 Implement custom `ModelController`:
 
@@ -3094,7 +3094,7 @@ Implement custom `ModelController`:
 
 ### Exit criterion
 
-Run 3–5 clients with injected delay.
+Run 3â€“5 clients with injected delay.
 
 Observed:
 
@@ -3108,7 +3108,7 @@ No adapter/version mixups.
 
 ---
 
-## Week 8 — Strong baseline week
+## Week 8 â€” Strong baseline week
 
 Highest priority:
 
@@ -3120,7 +3120,7 @@ This week is critical because weak baselines can invalidate an otherwise good th
 
 ---
 
-## Week 9 — Main experiment matrix I
+## Week 9 â€” Main experiment matrix I
 
 Primary small model.
 
@@ -3135,7 +3135,7 @@ Do not change the algorithm after looking at every result. Freeze hyperparameter
 
 ---
 
-## Week 10 — Main experiment matrix II + ablations
+## Week 10 â€” Main experiment matrix II + ablations
 
 Run:
 
@@ -3150,7 +3150,7 @@ Collect systems metrics.
 
 ---
 
-## Week 11 — Scale / larger-model validation
+## Week 11 â€” Scale / larger-model validation
 
 Only now move to a larger model.
 
@@ -3164,7 +3164,7 @@ If 7B is too slow, a 3B validation is completely acceptable for the thesis.
 
 ---
 
-## Week 12 — Thesis freeze
+## Week 12 â€” Thesis freeze
 
 Produce:
 
@@ -3201,7 +3201,7 @@ flowchart TD
 
 Do not run the full Cartesian product.
 
-## Stage 1 — diagnostic
+## Stage 1 â€” diagnostic
 
 - clients: 10;
 - ranks: $\{4,8,16\}$;
@@ -3210,7 +3210,7 @@ Do not run the full Cartesian product.
 - one dataset;
 - 3 seeds.
 
-## Stage 2 — main
+## Stage 2 â€” main
 
 - clients: 20;
 - rank settings:
@@ -3230,7 +3230,7 @@ Do not run the full Cartesian product.
   - VAST;
 - 3 seeds.
 
-## Stage 3 — robustness
+## Stage 3 â€” robustness
 
 Only the most informative combinations.
 
@@ -3262,7 +3262,7 @@ A result that only wins by $<0.2$ points on one dataset and one seed is not suff
 
 # 47. What would make the thesis fail scientifically?
 
-## Failure F1 — compatibility has no predictive value
+## Failure F1 â€” compatibility has no predictive value
 
 Most serious failure.
 
@@ -3275,7 +3275,7 @@ Mitigation:
 
 If still no signal, pivot.
 
-## Failure F2 — projection removes client-specific useful novelty
+## Failure F2 â€” projection removes client-specific useful novelty
 
 A stale client may contain legitimately new information outside the recent global subspace.
 
@@ -3289,7 +3289,7 @@ $$
 
 Residual decays according to age rather than disappearing immediately.
 
-## Failure F3 — fast clients dominate the reference
+## Failure F3 â€” fast clients dominate the reference
 
 This is possible in AsyncFL.
 
@@ -3303,11 +3303,11 @@ First test:
 
 Treat fairness as a limitation/extension unless it is a proven dominant failure.
 
-## Failure F4 — reference subspace becomes stale itself
+## Failure F4 â€” reference subspace becomes stale itself
 
 Use a short rolling window and recency weights.
 
-## Failure F5 — recompression error dominates
+## Failure F5 â€” recompression error dominates
 
 Log
 
@@ -3339,19 +3339,19 @@ Each one creates another paper-sized problem.
 
 # 49. Practical NVFlare development strategy
 
-## Phase A — pure PyTorch research simulator
+## Phase A â€” pure PyTorch research simulator
 
 Fastest iteration.
 
-## Phase B — NVFlare local POC
+## Phase B â€” NVFlare local POC
 
 Custom controller + trainer.
 
-## Phase C — Docker / multi-process
+## Phase C â€” Docker / multi-process
 
 Inject real latency and failures.
 
-## Phase D — optional multi-machine/Kubernetes
+## Phase D â€” optional multi-machine/Kubernetes
 
 Only if the thesis needs a deployment demonstration.
 
@@ -3411,13 +3411,13 @@ Task-specific metrics belong in a separate evaluation table.
 
 # 52. Suggested thesis chapter structure
 
-## Chapter 1 — Introduction
+## Chapter 1 â€” Introduction
 
 Problem:
 
 > asynchronous client heterogeneity makes stale LoRA innovations unavoidable, while heterogeneous ranks make factor-level semantics non-trivial.
 
-## Chapter 2 — Background
+## Chapter 2 â€” Background
 
 - FL;
 - AsyncFL;
@@ -3425,7 +3425,7 @@ Problem:
 - gauge ambiguity;
 - heterogeneous ranks.
 
-## Chapter 3 — Related Work
+## Chapter 3 â€” Related Work
 
 Organize by **problem axis**, not chronological paper list:
 
@@ -3435,7 +3435,7 @@ Organize by **problem axis**, not chronological paper list:
 4. asynchronous federated LLM fine-tuning;
 5. subspace-based stale correction.
 
-## Chapter 4 — Empirical Motivation
+## Chapter 4 â€” Empirical Motivation
 
 This should be a major chapter.
 
@@ -3453,7 +3453,7 @@ $$
 
 explain different aspects of stale-update utility.
 
-## Chapter 5 — VAST-LoRA
+## Chapter 5 â€” VAST-LoRA
 
 - innovation representation;
 - intrinsic compact SVD;
@@ -3463,14 +3463,14 @@ explain different aspects of stale-update utility.
 - aggregation;
 - complexity.
 
-## Chapter 6 — Experiments
+## Chapter 6 â€” Experiments
 
 - main results;
 - robustness;
 - ablation;
 - systems overhead.
 
-## Chapter 7 — Limitations
+## Chapter 7 â€” Limitations
 
 Be explicit:
 
@@ -3480,7 +3480,7 @@ Be explicit:
 - limited large-model scale;
 - fast-changing literature.
 
-## Chapter 8 — Conclusion
+## Chapter 8 â€” Conclusion
 
 ---
 
@@ -3492,7 +3492,7 @@ Be explicit:
 
 ### What you should **not** say
 
-> “I combine GLoRA, FedSteer and AlignFed.”
+> â€œI combine GLoRA, FedSteer and AlignFed.â€
 
 Even if those works inspired the design, that sentence destroys the research positioning.
 
@@ -3552,7 +3552,7 @@ The exact method must be positioned against:
 - PreLort;
 - recent geometry-aware FedLoRA methods.
 
-## Is it a “nồi cám heo”?
+## Is it a â€œná»“i cÃ¡m heoâ€?
 
 **Not in the formulation in this document.**
 
@@ -3572,21 +3572,21 @@ $$
 
 Every core component is required by that chain.
 
-The thesis becomes a “mix” only if unrelated modules such as personalization, fairness, adaptive rank assignment and privacy are reintroduced as simultaneous contributions.
+The thesis becomes a â€œmixâ€ only if unrelated modules such as personalization, fairness, adaptive rank assignment and privacy are reintroduced as simultaneous contributions.
 
 ---
 
-# 56. Danh sách ưu tiên triển khai ngay sau Week 1
+# 56. Danh sÃ¡ch Æ°u tiÃªn triá»ƒn khai ngay sau Week 1
 
-1. Viết kernel low-rank trước: exact innovation factorization $D=L R$.
-2. Viết compact QR + small-SVD và test bằng dense fp32 oracle.
-3. Viết low-rank add, weighted sum và recompress.
-4. Xây event-driven version/staleness simulator bằng pure PyTorch.
-5. Chạy một FedLoRA baseline nhỏ để tạo update thật.
-6. Thu thập 100–500 stale innovations đầu tiên nếu runtime cho phép.
-7. Kiểm tra liệu $\rho$ có dự đoán update utility tốt hơn chỉ dùng $\tau$ hay không.
-8. **Chỉ sau khi kill-test có tín hiệu**, mới triển khai full VAST transport.
-9. **Chỉ sau khi simulator ổn**, mới chuyển sang NVFlare local POC.
+1. Viáº¿t kernel low-rank trÆ°á»›c: exact innovation factorization $D=L R$.
+2. Viáº¿t compact QR + small-SVD vÃ  test báº±ng dense fp32 oracle.
+3. Viáº¿t low-rank add, weighted sum vÃ  recompress.
+4. XÃ¢y event-driven version/staleness simulator báº±ng pure PyTorch.
+5. Cháº¡y má»™t FedLoRA baseline nhá» Ä‘á»ƒ táº¡o update tháº­t.
+6. Thu tháº­p 100â€“500 stale innovations Ä‘áº§u tiÃªn náº¿u runtime cho phÃ©p.
+7. Kiá»ƒm tra liá»‡u $\rho$ cÃ³ dá»± Ä‘oÃ¡n update utility tá»‘t hÆ¡n chá»‰ dÃ¹ng $\tau$ hay khÃ´ng.
+8. **Chá»‰ sau khi kill-test cÃ³ tÃ­n hiá»‡u**, má»›i triá»ƒn khai full VAST transport.
+9. **Chá»‰ sau khi simulator á»•n**, má»›i chuyá»ƒn sang NVFlare local POC.
 
 ---
 
@@ -3631,14 +3631,14 @@ The thesis becomes a “mix” only if unrelated modules such as personalization
 13. NVIDIA. **NVFlare ModelController programming guide**.  
     https://github.com/NVIDIA/NVFlare/blob/main/docs/programming_guide/controllers/model_controller.rst
 
-14. NVIDIA. **NVFlare releases — 2.8.1**.  
+14. NVIDIA. **NVFlare releases â€” 2.8.1**.  
     https://github.com/NVIDIA/NVFlare/releases
 
 ---
 
 ## Literature-review disclaimer
 
-This document reflects a targeted review performed on **2026-08-10**. Federated PEFT / LoRA research is moving very quickly. Before making a “first”, “novel” or “pioneer” statement in the final thesis, repeat the search across arXiv, ACL Anthology, OpenReview, Semantic Scholar and Google Scholar using combinations of:
+This document reflects a targeted review performed on **2026-08-10**. Federated PEFT / LoRA research is moving very quickly. Before making a â€œfirstâ€, â€œnovelâ€ or â€œpioneerâ€ statement in the final thesis, repeat the search across arXiv, ACL Anthology, OpenReview, Semantic Scholar and Google Scholar using combinations of:
 
 ```text
 asynchronous federated LoRA
@@ -3740,3 +3740,4 @@ freshness, and whole-update calibration alone. GLoRA, FedSteer and AlignFed
 entries are explicitly matched adaptations, not claims against their complete
 published protocols. Full methods, metrics and remaining gates are documented
 in `docs/week4/week4_rift_competitor_review_vi.md`.
+

@@ -1,4 +1,4 @@
-from vastlora.data import iid_partition_indices, label_shard_partition_indices
+﻿from riftlora.data import iid_partition_indices, label_shard_partition_indices
 
 
 def test_iid_partition_is_deterministic_and_complete() -> None:
@@ -37,3 +37,4 @@ def test_label_shards_create_non_iid_clients() -> None:
     ]
     assert min(positive_rates) == 0.0
     assert max(positive_rates) == 1.0
+

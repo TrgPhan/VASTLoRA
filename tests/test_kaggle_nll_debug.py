@@ -1,9 +1,9 @@
-import json
+﻿import json
 from pathlib import Path
 
 import pandas as pd
 
-from vastlora.scale.nll_debug import write_nll_debug
+from riftlora.scale.nll_debug import write_nll_debug
 
 
 def _write_run(root: Path, method: str, seed: int, rows: list[dict]) -> None:
@@ -82,3 +82,4 @@ def test_nll_debug_reports_missing_detail_artifacts(tmp_path: Path) -> None:
 
     assert outputs.missing_runs == ["freshness_seed1"]
     assert (outputs.output_dir / "nll_debug.md").exists()
+

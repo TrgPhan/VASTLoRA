@@ -1,4 +1,4 @@
-# RIFT-LoRA - Research Feasibility Review & 12-Week Senior Research Guide
+﻿# RIFT-LoRA - Research Feasibility Review & 12-Week Senior Research Guide
 
 Ngay tao: 2026-08-26
 
@@ -835,9 +835,9 @@ same measured event count
 
 Core files:
 
-- `src/vastlora/diagnostics/objective.py`
-- `src/vastlora/diagnostics/competitors.py`
-- `src/vastlora/lora/diagnostic.py`
+- `src/riftlora/diagnostics/objective.py`
+- `src/riftlora/diagnostics/competitors.py`
+- `src/riftlora/lora/diagnostic.py`
 - `scripts/collect_week3_diagnostics.py`
 - `scripts/run_week4_competitor_matrix.py`
 - `scripts/analyze_week4_rift.py`
@@ -852,7 +852,7 @@ Result docs:
 # 33. Suggested project layout
 
 ```text
-src/vastlora/
+src/riftlora/
   asyncfl/
     simulator.py
   data/
@@ -1400,3 +1400,4 @@ Current answer: **GO for thesis prototype**, pending:
 - `docs/week4/week4_rift_novelty_review_vi.md`
 - `outputs/week4_rift_competitor_analysis/competitor_report.md`
 - `outputs/week4_rift_qnli_competitor_analysis/competitor_report.md`
+

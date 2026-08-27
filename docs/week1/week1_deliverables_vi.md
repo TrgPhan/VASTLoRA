@@ -1,4 +1,4 @@
-# Week 1 Deliverables - VAST-LoRA
+﻿# Week 1 Deliverables - VAST-LoRA
 
 Ngay cap nhat: 2026-08-10  
 Trang thai: da tao skeleton folder va dong bang tam thoi literature map cho Week 1.
@@ -19,16 +19,16 @@ Week 1 khong nen viet full algorithm ngay. Muc tieu dung hon la:
 ```text
 configs/
 src/
-src/vastlora/
-src/vastlora/lowrank/
-src/vastlora/lora/
-src/vastlora/asyncfl/
-src/vastlora/vast/
-src/vastlora/baselines/
-src/vastlora/eval/
-src/vastlora/data/
-src/vastlora/logging/
-src/vastlora/nvflare_app/
+src/riftlora/
+src/riftlora/lowrank/
+src/riftlora/lora/
+src/riftlora/asyncfl/
+src/riftlora/vast/
+src/riftlora/baselines/
+src/riftlora/eval/
+src/riftlora/data/
+src/riftlora/logging/
+src/riftlora/nvflare_app/
 tests/
 tests/lowrank/
 tests/vast/
@@ -510,4 +510,5 @@ NO-GO neu $\rho_i$ gan nhu khong co predictive value qua nhieu seed/task. Khi do
 - PreLort: https://arxiv.org/pdf/2606.15963
 - FSLoRA: https://arxiv.org/abs/2501.19389
 - QLoRA: https://arxiv.org/abs/2305.14314
+
 

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -13,7 +13,7 @@ if str(SRC_ROOT) not in sys.path:
 
 from datasets import load_dataset  # noqa: E402
 
-from vastlora.data import (  # noqa: E402
+from riftlora.data import (  # noqa: E402
     TextDatasetSpec,
     audit_text_split,
     build_iid_partition_manifest,
@@ -103,3 +103,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

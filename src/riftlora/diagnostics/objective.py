@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 import math
@@ -6,7 +6,7 @@ from typing import Mapping
 
 import torch
 
-from vastlora.lowrank import LowRankMatrix, compact_svd
+from riftlora.lowrank import LowRankMatrix, compact_svd
 
 
 @dataclass(frozen=True)
@@ -141,3 +141,4 @@ def paired_loss_gate(
         upper_bound=upper_bound,
         accepted=upper_bound <= max_mean_increase,
     )
+

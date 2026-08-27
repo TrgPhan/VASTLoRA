@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 import math
@@ -6,7 +6,7 @@ from typing import Literal, Sequence
 
 import torch
 
-from vastlora.lowrank import (
+from riftlora.lowrank import (
     CompactSVD,
     build_adaptive_temporal_reference,
     build_temporal_reference,
@@ -211,3 +211,4 @@ def aggregate_compact_state(
     else:
         combined = weighted_sum([server.as_lowrank(), update.as_lowrank()], [1.0, weight])
     return recompress(combined, max_rank=max_rank, rtol=rank_rtol)
+

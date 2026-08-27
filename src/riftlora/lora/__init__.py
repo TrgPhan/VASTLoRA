@@ -1,6 +1,6 @@
-"""Minimal LoRA components used by the diagnostic kill-test."""
+﻿"""Minimal LoRA components used by the diagnostic kill-test."""
 
-from vastlora.lora.diagnostic import (
+from riftlora.lora.diagnostic import (
     AdapterState,
     DiagnosticFactorSnapshot,
     DiagnosticLoRALinear,
@@ -33,3 +33,4 @@ __all__ = [
     "set_server_adapter_state",
     "zero_local_adapters",
 ]
+

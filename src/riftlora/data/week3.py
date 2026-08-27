@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
@@ -7,7 +7,7 @@ import hashlib
 import json
 from typing import Any
 
-from vastlora.data.partitioning import iid_partition_indices
+from riftlora.data.partitioning import iid_partition_indices
 
 
 Record = Mapping[str, Any]
@@ -281,3 +281,4 @@ def _split_issues(
             }
         )
     return issues
+

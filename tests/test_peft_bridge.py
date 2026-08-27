@@ -1,10 +1,10 @@
-from types import SimpleNamespace
+﻿from types import SimpleNamespace
 
 import torch
 from torch import nn
 
-from vastlora.lowrank import LowRankMatrix, compact_svd
-from vastlora.scale import (
+from riftlora.lowrank import LowRankMatrix, compact_svd
+from riftlora.scale import (
     FactorSnapshot,
     capture_factor_snapshot,
     compact_factor_innovations,
@@ -115,3 +115,4 @@ def test_fedrot_factor_aggregation_aligns_rotated_client() -> None:
         rtol=1e-5,
         atol=1e-5,
     )
+

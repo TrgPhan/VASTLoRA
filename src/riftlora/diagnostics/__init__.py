@@ -1,6 +1,6 @@
-"""Diagnostic collection and Week-4 kill-test helpers."""
+﻿"""Diagnostic collection and Week-4 kill-test helpers."""
 
-from vastlora.diagnostics.geometry import (
+from riftlora.diagnostics.geometry import (
     GeometryResult,
     PersistentProjectionResult,
     analyze_innovation_geometry,
@@ -9,23 +9,23 @@ from vastlora.diagnostics.geometry import (
     persistent_temporal_projection,
     subspace_lattice_transport,
 )
-from vastlora.diagnostics.analysis import (
+from riftlora.diagnostics.analysis import (
     analyze_scope,
     decide_gate,
     matched_tau_analysis,
     partial_spearman,
 )
-from vastlora.diagnostics.schema import (
+from riftlora.diagnostics.schema import (
     REQUIRED_DIAGNOSTIC_COLUMNS,
     validate_diagnostic_dataframe,
 )
-from vastlora.diagnostics.objective import (
+from riftlora.diagnostics.objective import (
     PairedGateResult,
     RankwiseFilterResult,
     filter_rankwise_by_gradient,
     paired_loss_gate,
 )
-from vastlora.diagnostics.competitors import (
+from riftlora.diagnostics.competitors import (
     ProjectedCompetitorUpdate,
     dense_state_difference,
     fedrot_aggregate_diagnostic_state,
@@ -57,3 +57,4 @@ __all__ = [
     "transport_innovations",
     "validate_diagnostic_dataframe",
 ]
+

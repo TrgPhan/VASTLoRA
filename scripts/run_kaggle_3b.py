@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 from collections import deque
@@ -23,10 +23,10 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from vastlora.asyncfl import AsyncEventSimulator, ClientProfile
-from vastlora.data import iid_partition_indices, label_shard_partition_indices
-from vastlora.lowrank import CompactSVD
-from vastlora.scale import (
+from riftlora.asyncfl import AsyncEventSimulator, ClientProfile
+from riftlora.data import iid_partition_indices, label_shard_partition_indices
+from riftlora.lowrank import CompactSVD
+from riftlora.scale import (
     TransportConfig,
     aggregate_compact_state,
     capture_factor_snapshot,
@@ -40,7 +40,7 @@ from vastlora.scale import (
     score_compact_components_with_hooks,
     transport_compact_update,
 )
-from vastlora.scale.tradeoff import reserved_train_eval_indices
+from riftlora.scale.tradeoff import reserved_train_eval_indices
 
 
 DEFAULT_LABEL_TEXTS = {
@@ -1311,3 +1311,4 @@ def _dry_run_summary(config: Mapping[str, Any], args: argparse.Namespace) -> dic
 
 if __name__ == "__main__":
     main()
+

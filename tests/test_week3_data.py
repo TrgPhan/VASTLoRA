@@ -1,4 +1,4 @@
-from vastlora.data import audit_text_split, build_iid_partition_manifest, summarize_partition_manifest
+﻿from riftlora.data import audit_text_split, build_iid_partition_manifest, summarize_partition_manifest
 
 
 def test_text_split_audit_flags_conflicting_duplicates() -> None:
@@ -51,3 +51,4 @@ def test_iid_partition_manifest_is_complete_and_balanced() -> None:
     assert all(row["complete"] for row in summary)
     assert all(row["client_sample_delta"] <= 1 for row in summary)
     assert manifest["partitions"][0]["clients"][2]["rank"] == 16
+

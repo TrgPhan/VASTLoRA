@@ -1,9 +1,9 @@
-import json
+﻿import json
 from pathlib import Path
 
 import pytest
 
-from vastlora.scale.reporting import summarize_results
+from riftlora.scale.reporting import summarize_results
 
 
 def _write_result(
@@ -170,3 +170,4 @@ def test_reporting_refuses_unfrozen_target_variant(tmp_path: Path) -> None:
 
     assert verdict["status"] == "INCOMPLETE"
     assert verdict["missing_target_variant"] == "hybrid_beta020"
+

@@ -1,6 +1,6 @@
-import pytest
+﻿import pytest
 
-from vastlora.asyncfl import AsyncEventSimulator, ClientProfile, SnapshotStore
+from riftlora.asyncfl import AsyncEventSimulator, ClientProfile, SnapshotStore
 
 
 def _clients() -> list[ClientProfile]:
@@ -57,4 +57,5 @@ def test_snapshot_store_keeps_versioned_payloads() -> None:
     assert store.latest().payload == "adapter-v1"
     with pytest.raises(ValueError):
         store.put(1, "duplicate")
+
 

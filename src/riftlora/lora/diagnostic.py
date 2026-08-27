@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -8,7 +8,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from vastlora.lowrank import LowRankMatrix, exact_lora_innovation
+from riftlora.lowrank import LowRankMatrix, exact_lora_innovation
 
 
 AdapterState = dict[str, torch.Tensor]
@@ -259,3 +259,4 @@ def add_dense_innovation(
         dense = update.dense() if isinstance(update, LowRankMatrix) else update
         result[name] = current + weight * dense.to(current)
     return result
+

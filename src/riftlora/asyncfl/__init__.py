@@ -1,12 +1,12 @@
-"""Deterministic asynchronous FL event simulation utilities."""
+﻿"""Deterministic asynchronous FL event simulation utilities."""
 
-from vastlora.asyncfl.simulator import (
+from riftlora.asyncfl.simulator import (
     AsyncEventSimulator,
     ClientProfile,
     ReturnRecord,
     SimulationTrace,
 )
-from vastlora.asyncfl.snapshots import SnapshotStore, VersionedSnapshot
+from riftlora.asyncfl.snapshots import SnapshotStore, VersionedSnapshot
 
 __all__ = [
     "AsyncEventSimulator",
@@ -16,3 +16,4 @@ __all__ = [
     "SnapshotStore",
     "VersionedSnapshot",
 ]
+

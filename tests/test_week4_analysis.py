@@ -1,7 +1,7 @@
-import numpy as np
+﻿import numpy as np
 import pandas as pd
 
-from vastlora.diagnostics.analysis import (
+from riftlora.diagnostics.analysis import (
     analyze_scope,
     decide_gate,
     matched_tau_analysis,
@@ -55,3 +55,4 @@ def test_gate_reports_no_go_without_supported_scope() -> None:
     values["partial_spearman_ci95"] = [-0.1, 0.2]
     result = decide_gate({"iid_homogeneous": values})
     assert result["decision"] == "NO-GO"
+

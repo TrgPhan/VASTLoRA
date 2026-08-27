@@ -1,11 +1,11 @@
-# Week 2 Deliverables - VAST-LoRA
+﻿# Week 2 Deliverables - VAST-LoRA
 
-Ngày cập nhật: 2026-08-11  
-Mục tiêu: xây nền low-rank algebra và simulator tái lập được trước khi triển khai full VAST hoặc NVFlare.
+NgÃ y cáº­p nháº­t: 2026-08-11  
+Má»¥c tiÃªu: xÃ¢y ná»n low-rank algebra vÃ  simulator tÃ¡i láº­p Ä‘Æ°á»£c trÆ°á»›c khi triá»ƒn khai full VAST hoáº·c NVFlare.
 
-## 1. Quyết định triển khai
+## 1. Quyáº¿t Ä‘á»‹nh triá»ƒn khai
 
-Week 2 vẫn giữ nguyên thesis core:
+Week 2 váº«n giá»¯ nguyÃªn thesis core:
 
 $$
 \text{stale LoRA innovation}
@@ -17,7 +17,7 @@ $$
 \text{selective stale residual attenuation}.
 $$
 
-Thứ tự triển khai được giữ như sau:
+Thá»© tá»± triá»ƒn khai Ä‘Æ°á»£c giá»¯ nhÆ° sau:
 
 ```text
 low-rank algebra kernel
@@ -28,17 +28,17 @@ low-rank algebra kernel
 -> NVFlare integration
 ```
 
-Chưa triển khai training LLM, chưa tích hợp NVFlare, và chưa thêm dynamic rank scheduler/fairness/privacy.
+ChÆ°a triá»ƒn khai training LLM, chÆ°a tÃ­ch há»£p NVFlare, vÃ  chÆ°a thÃªm dynamic rank scheduler/fairness/privacy.
 
-## 2. Low-rank algebra đã có
+## 2. Low-rank algebra Ä‘Ã£ cÃ³
 
-File chính:
+File chÃ­nh:
 
 ```text
-src/vastlora/lowrank/core.py
+src/riftlora/lowrank/core.py
 ```
 
-Các object/hàm chính:
+CÃ¡c object/hÃ m chÃ­nh:
 
 ```text
 LowRankMatrix
@@ -53,7 +53,7 @@ project_to_reference
 
 ### 2.1 Exact innovation factorization
 
-Server không nhận whole adapter như update mới. Server phải dựng local innovation:
+Server khÃ´ng nháº­n whole adapter nhÆ° update má»›i. Server pháº£i dá»±ng local innovation:
 
 $$
 D_i
@@ -61,7 +61,7 @@ D_i
 G_{i,E}^{(v_i)}-G_{i,0}^{(v_i)}.
 $$
 
-Với LoRA factors:
+Vá»›i LoRA factors:
 
 $$
 D_i
@@ -71,7 +71,7 @@ B_{i,E}A_{i,E}
 B_{i,0}A_{i,0}.
 $$
 
-Code biểu diễn chính xác:
+Code biá»ƒu diá»…n chÃ­nh xÃ¡c:
 
 $$
 L_i=
@@ -86,7 +86,7 @@ A_{i,E}\\
 \end{bmatrix}.
 $$
 
-Do đó:
+Do Ä‘Ã³:
 
 $$
 D_i=L_iR_i.
@@ -94,7 +94,7 @@ $$
 
 ### 2.2 Compact QR/SVD
 
-Đường chính không cần dense reconstruction. Với:
+ÄÆ°á»ng chÃ­nh khÃ´ng cáº§n dense reconstruction. Vá»›i:
 
 $$
 D_i=L_iR_i,
@@ -108,13 +108,13 @@ L_i=Q_{L,i}T_{L,i},
 R_i^\top=Q_{R,i}T_{R,i}.
 $$
 
-Ma trận nhỏ:
+Ma tráº­n nhá»:
 
 $$
 M_i=T_{L,i}T_{R,i}^{\top}.
 $$
 
-SVD nhỏ:
+SVD nhá»:
 
 $$
 M_i=P_i\Sigma_iQ_i^\top.
@@ -130,9 +130,9 @@ U_i=Q_{L,i}P_i,
 V_i=Q_{R,i}Q_i.
 $$
 
-### 2.3 Projection và compatibility
+### 2.3 Projection vÃ  compatibility
 
-Với reference bases $Q_L^t,Q_R^t$:
+Vá»›i reference bases $Q_L^t,Q_R^t$:
 
 $$
 D_i^\parallel=P_L^tD_iP_R^t.
@@ -153,52 +153,52 @@ $$
 {\|\Sigma_i\|_F^2+\epsilon}.
 $$
 
-## 3. Async simulator đã có
+## 3. Async simulator Ä‘Ã£ cÃ³
 
-File chính:
+File chÃ­nh:
 
 ```text
-src/vastlora/asyncfl/simulator.py
+src/riftlora/asyncfl/simulator.py
 ```
 
-Simulator hiện hỗ trợ:
+Simulator hiá»‡n há»— trá»£:
 
-- client profile: `client_id`, rank, số mẫu, compute time, network time, jitter;
+- client profile: `client_id`, rank, sá»‘ máº«u, compute time, network time, jitter;
 - dispatch version;
 - arrival version;
 - version staleness;
 - event priority queue theo virtual finish time;
 - buffer size;
-- deterministic replay bằng seed.
+- deterministic replay báº±ng seed.
 
-Staleness được ghi theo:
+Staleness Ä‘Æ°á»£c ghi theo:
 
 $$
 \tau_i=t-v_i.
 $$
 
-Trong đó $v_i$ là base version khi dispatch, còn $t$ là server version khi update về tới server.
+Trong Ä‘Ã³ $v_i$ lÃ  base version khi dispatch, cÃ²n $t$ lÃ  server version khi update vá» tá»›i server.
 
-## 4. Partitioning và snapshot
+## 4. Partitioning vÃ  snapshot
 
-Đã có deterministic data partitioning:
+ÄÃ£ cÃ³ deterministic data partitioning:
 
 ```text
-src/vastlora/data/partitioning.py
+src/riftlora/data/partitioning.py
 ```
 
-Gồm:
+Gá»“m:
 
 - `iid_partition_indices`;
 - `label_shard_partition_indices`.
 
-Đã có snapshot store:
+ÄÃ£ cÃ³ snapshot store:
 
 ```text
-src/vastlora/asyncfl/snapshots.py
+src/riftlora/asyncfl/snapshots.py
 ```
 
-Mục tiêu của snapshot store là chuẩn bị cho Week 3 khi mỗi client cần train từ đúng adapter version đã dispatch.
+Má»¥c tiÃªu cá»§a snapshot store lÃ  chuáº©n bá»‹ cho Week 3 khi má»—i client cáº§n train tá»« Ä‘Ãºng adapter version Ä‘Ã£ dispatch.
 
 ## 5. Script demo
 
@@ -208,13 +208,13 @@ Config:
 configs/week2_simulator.json
 ```
 
-Chạy:
+Cháº¡y:
 
 ```powershell
 python scripts/run_week2_simulator.py
 ```
 
-Output gồm:
+Output gá»“m:
 
 - return order;
 - dispatch versions;
@@ -223,7 +223,7 @@ Output gồm:
 - staleness histogram;
 - full records.
 
-## 6. Tests đã có
+## 6. Tests Ä‘Ã£ cÃ³
 
 ```text
 tests/lowrank/test_core.py
@@ -231,21 +231,21 @@ tests/test_async_simulator.py
 tests/test_partitioning.py
 ```
 
-Các test chính:
+CÃ¡c test chÃ­nh:
 
-- innovation factorization khớp dense oracle;
-- compact SVD reconstruct đúng low-rank matrix;
-- gauge-invariant dense result và singular spectrum;
-- weighted sum khớp dense oracle;
+- innovation factorization khá»›p dense oracle;
+- compact SVD reconstruct Ä‘Ãºng low-rank matrix;
+- gauge-invariant dense result vÃ  singular spectrum;
+- weighted sum khá»›p dense oracle;
 - recompress theo rank budget;
-- projection khớp dense oracle;
+- projection khá»›p dense oracle;
 - full reference cho $\rho_i^t \approx 1$;
-- simulator deterministic cùng seed;
-- buffered async chỉ tăng version khi buffer đầy;
-- partitioning deterministic và không mất sample;
-- snapshot store giữ đúng version.
+- simulator deterministic cÃ¹ng seed;
+- buffered async chá»‰ tÄƒng version khi buffer Ä‘áº§y;
+- partitioning deterministic vÃ  khÃ´ng máº¥t sample;
+- snapshot store giá»¯ Ä‘Ãºng version.
 
-Kết quả hiện tại:
+Káº¿t quáº£ hiá»‡n táº¡i:
 
 ```text
 12 passed
@@ -253,19 +253,19 @@ Kết quả hiện tại:
 
 ## 7. Handoff sang Week 3
 
-Nền Week 2 đã đủ để bước sang diagnostic data collection, nhưng còn cần nối với LoRA training thật.
+Ná»n Week 2 Ä‘Ã£ Ä‘á»§ Ä‘á»ƒ bÆ°á»›c sang diagnostic data collection, nhÆ°ng cÃ²n cáº§n ná»‘i vá»›i LoRA training tháº­t.
 
-Việc tiếp theo:
+Viá»‡c tiáº¿p theo:
 
-1. Tạo minimal FedLoRA training loop nhỏ.
-2. Gắn `SnapshotStore` với adapter snapshots thật.
-3. Khi client return, dựng:
+1. Táº¡o minimal FedLoRA training loop nhá».
+2. Gáº¯n `SnapshotStore` vá»›i adapter snapshots tháº­t.
+3. Khi client return, dá»±ng:
 
 $$
 D_i=G_{i,E}^{(v_i)}-G_{i,0}^{(v_i)}.
 $$
 
-4. Log mỗi returned update:
+4. Log má»—i returned update:
 
 ```text
 client_id
@@ -283,5 +283,6 @@ rho_two_sided
 raw_update_utility
 ```
 
-5. Chưa cần full VAST transport trước khi có đủ stale innovations để kiểm tra $\rho_i^t$.
+5. ChÆ°a cáº§n full VAST transport trÆ°á»›c khi cÃ³ Ä‘á»§ stale innovations Ä‘á»ƒ kiá»ƒm tra $\rho_i^t$.
+
 

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -11,7 +11,7 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from vastlora.asyncfl import AsyncEventSimulator, ClientProfile  # noqa: E402
+from riftlora.asyncfl import AsyncEventSimulator, ClientProfile  # noqa: E402
 
 
 def main() -> None:
@@ -46,4 +46,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 

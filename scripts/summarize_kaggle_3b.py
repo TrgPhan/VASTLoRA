@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 from pathlib import Path
@@ -10,7 +10,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from vastlora.scale.reporting import render_verdict_markdown, write_summary
+from riftlora.scale.reporting import render_verdict_markdown, write_summary
 
 
 def parse_args() -> argparse.Namespace:
@@ -38,3 +38,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

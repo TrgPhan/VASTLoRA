@@ -35,6 +35,7 @@ from riftlora.diagnostics import (
     RankwiseFilterResult,
     analyze_innovation_geometry,
     dense_state_difference,
+    fedex_exact_diagnostic_state,
     fedrot_aggregate_diagnostic_state,
     fedsteer_cached_vector_projection,
     filter_rankwise_by_gradient,
@@ -519,7 +520,7 @@ def run_diagnostic(
             )
             fedrot_updates = {
                 name: update.to(innovations[name].device)
-                for name, update in dense_state_difference(
+                for name, update in fedex_exact_diagnostic_state(
                     fedrot_state, current_state
                 ).items()
             }

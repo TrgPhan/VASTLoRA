@@ -4,6 +4,9 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pandas as pd
+import pytest
+
 
 SCRIPT = (
     Path(__file__).resolve().parents[1]
@@ -55,3 +58,87 @@ def test_kaggle_rift_report_groups_task_regime_and_harm(tmp_path: Path) -> None:
     assert summary[summary["method"] == "rift"].iloc[0]["late_harmful_update_rate"] == 0.0
     assert paired.iloc[0]["target_late_harmful_reduction"] == 0.40
     assert "Accuracy | Loss | Harmful | Late harmful" in report
+
+
+def test_kaggle_rift_analysis_rejects_seed_mismatch() -> None:
+    frame = pd.DataFrame(
+        [
+            {"task": "qnli", "regime": "noniid_high_staleness", "method": "rift", "seed": 1},
+            {"task": "qnli", "regime": "noniid_high_staleness", "method": "fedrot", "seed": 2},
+        ]
+    )
+
+    with pytest.raises(ValueError, match="seed mismatch"):
+        MODULE.validate_seed_alignment(frame, target="rift")
+
+
+def test_kaggle_rift_week8_verdict_passes_on_hard_slice_gain() -> None:
+    paired = pd.DataFrame(
+        [
+            {
+                "task": "sst2",
+                "regime": "noniid_high_staleness",
+                "method": "fedrot",
+                "paired_seeds": 6,
+                "target_acceptance_rate": 0.75,
+                "target_accuracy_gain_pp": 0.8,
+                "target_accuracy_gain_ci95_low": 0.6,
+                "target_accuracy_gain_ci95_high": 1.0,
+                "target_nll_reduction": 0.02,
+                "target_nll_reduction_ci95_low": 0.01,
+                "target_nll_reduction_ci95_high": 0.03,
+                "target_binary_nll_reduction": 0.01,
+                "target_binary_nll_reduction_ci95_low": 0.0,
+                "target_binary_nll_reduction_ci95_high": 0.02,
+                "target_harmful_reduction": 0.10,
+                "target_harmful_reduction_ci95_low": 0.05,
+                "target_harmful_reduction_ci95_high": 0.15,
+                "target_late_harmful_reduction": 0.08,
+                "target_late_harmful_reduction_ci95_low": 0.02,
+                "target_late_harmful_reduction_ci95_high": 0.12,
+            }
+        ]
+    )
+
+    verdict = MODULE.week8_verdict(paired)
+
+    assert verdict["status"] == "GO"
+    assert verdict["hard_slice_checks"][0]["pass"] is True
+
+
+def test_kaggle_rift_week8_verdict_is_inconclusive_without_hard_slice() -> None:
+    paired = pd.DataFrame(
+        [{
+            "task": "sst2",
+            "regime": "iid_homogeneous",
+            "method": "freshness",
+            "paired_seeds": 6,
+        }]
+    )
+
+    verdict = MODULE.week8_verdict(paired)
+
+    assert verdict["status"] == "INCONCLUSIVE"
+
+
+def test_kaggle_rift_completeness_detects_missing_task_and_method() -> None:
+    frame = pd.DataFrame(
+        [{
+            "task": "sst2",
+            "regime": "noniid_high_staleness",
+            "method": "rift",
+            "seed": 4101,
+        }]
+    )
+    matrix = {
+        "tasks": [{"name": "sst2"}, {"name": "qnli"}],
+        "regimes": [{"name": "noniid_high_staleness"}],
+        "methods": ["rift", "freshness"],
+        "seeds": [4101, 4102],
+    }
+
+    errors = MODULE.validate_matrix_completeness(frame, matrix)
+
+    assert any("missing task/regime: qnli" in error for error in errors)
+    assert any("missing method: sst2/noniid_high_staleness/freshness" in error for error in errors)
+    assert any("seed set mismatch" in error for error in errors)

@@ -7,6 +7,8 @@ from typing import Iterable
 
 import pandas as pd
 
+from riftlora.diagnostics import competitor_fidelity
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -31,13 +33,13 @@ DEFAULT_METHODS = {
 FIDELITY = {
     "rift": "proposed",
     "freshness": "faithful scalar baseline",
-    "fedex": "faithful exact-intrinsic operator",
+    "fedex": competitor_fidelity("fedex"),
     "projection": "matched temporal projection baseline",
     "vast": "project implementation",
-    "fedrot": "faithful Procrustes operator + explicit async interpolation",
-    "glora_cache": "async cached adaptation; not synchronous GLoRA",
-    "fedsteer_cache": "delayed-arrival adaptation; not inactive-client replay",
-    "alignfed_calibration": "whole-update calibration control; not full AlignFed",
+    "fedrot": competitor_fidelity("fedrot"),
+    "glora_cache": competitor_fidelity("glora_cache"),
+    "fedsteer_cache": competitor_fidelity("fedsteer_cache"),
+    "alignfed_calibration": competitor_fidelity("alignfed_calibration"),
 }
 
 

@@ -15,6 +15,59 @@ class ProjectedCompetitorUpdate:
     ranks: dict[str, int]
 
 
+@dataclass(frozen=True)
+class CompetitorSpec:
+    name: str
+    fidelity: str
+    description: str
+
+
+COMPETITOR_SPECS: dict[str, CompetitorSpec] = {
+    "fedex": CompetitorSpec(
+        name="fedex",
+        fidelity="faithful exact intrinsic innovation in matched simulator",
+        description="Exact dense innovation baseline for asynchronous FedLoRA.",
+    ),
+    "fedrot": CompetitorSpec(
+        name="fedrot",
+        fidelity="matched FedRot-LoRA Procrustes operator",
+        description="Factor alignment baseline with explicit async interpolation.",
+    ),
+    "glora_cache": CompetitorSpec(
+        name="glora_cache",
+        fidelity="async cached adaptation; not synchronous GLoRA",
+        description="Consensus-style cached subspace control for matched traces.",
+    ),
+    "fedsteer_cache": CompetitorSpec(
+        name="fedsteer_cache",
+        fidelity="delayed-arrival adaptation; not inactive-client replay",
+        description="Cached projection control inspired by FedSteer.",
+    ),
+    "alignfed_calibration": CompetitorSpec(
+        name="alignfed_calibration",
+        fidelity="whole-update calibration control; not full AlignFed",
+        description="Whole-update calibration gate control for async LoRA.",
+    ),
+}
+
+
+def competitor_fidelity(method: str) -> str:
+    return COMPETITOR_SPECS.get(method, CompetitorSpec(method, "unknown", "")).fidelity
+
+
+def competitor_description(method: str) -> str:
+    return COMPETITOR_SPECS.get(method, CompetitorSpec(method, "unknown", "")).description
+
+
+def fedex_exact_diagnostic_state(
+    after: Mapping[str, torch.Tensor],
+    before: Mapping[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    """FedEx exact baseline: return the dense innovation without approximation."""
+
+    return dense_state_difference(after, before)
+
+
 def fedrot_aggregate_diagnostic_state(
     server: Mapping[str, torch.Tensor],
     client_after: Mapping[str, DiagnosticFactorSnapshot],

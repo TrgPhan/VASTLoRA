@@ -34,3 +34,11 @@ remaining paper rows stay reference-only unless they have been ported into the
 matched simulator, so the notebook can judge whether the current VAST result is
 strong enough without overclaiming against incompatible paper numbers.
 
+`kaggle_qwen_3b_rift_week8_classification_matrix.ipynb` is the reproducible
+Week 8 entry point for the RIFT thesis. It clones the GitHub repository,
+installs the current code, runs the tests, and launches the SST-2/QNLI/MNLI
+classification matrix with two one-GPU workers when T4x2 is available. Use
+`smoke` for a quick check, `focused` for the hard-slice comparison, and `full`
+for the complete 576-run acceptance matrix. Results and the analyzer verdict
+are packaged as a ZIP under `/kaggle/working`.
+

@@ -4,6 +4,7 @@ from riftlora.asyncfl.simulator import (
     AsyncEventSimulator,
     ClientProfile,
     ReturnRecord,
+    UpdateGroupRecord,
     SimulationTrace,
 )
 from riftlora.asyncfl.snapshots import SnapshotStore, VersionedSnapshot
@@ -12,6 +13,7 @@ __all__ = [
     "AsyncEventSimulator",
     "ClientProfile",
     "ReturnRecord",
+    "UpdateGroupRecord",
     "SimulationTrace",
     "SnapshotStore",
     "VersionedSnapshot",

@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import argparse
+import copy
 from collections import deque
 from collections.abc import Mapping, Sequence
 import json
@@ -46,6 +47,7 @@ from riftlora.scale.tradeoff import reserved_train_eval_indices
 DEFAULT_LABEL_TEXTS = {
     "sst2": [" negative", " positive"],
     "qnli": [" yes", " no"],
+    "mnli": [" entailment", " neutral", " contradiction"],
 }
 METHODS = (
     "raw",
@@ -120,6 +122,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
     from datasets import load_dataset
 
     _seed_everything(seed)
+    config = _resolve_single_regime_config(config)
     dataset_config = config["dataset"]
     raw = load_dataset(dataset_config["hub_path"], dataset_config.get("subset"))
     train_split = dataset_config["train_split"]
@@ -189,7 +192,12 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
     )
     clients = _build_clients(experiment, partitions)
     total_returns = experiment["warmup_returns"] + experiment["collected_returns"]
-    trace = AsyncEventSimulator(clients, seed=seed).run(max_returns=total_returns)
+    trace = AsyncEventSimulator(
+        clients,
+        seed=seed,
+        buffer_size=int(experiment.get("buffer_size", 1)),
+        schedule_mode=str(experiment.get("schedule_mode", "async")),
+    ).run(max_returns=total_returns)
 
     tokenizer, model = _load_model(config)
     gradient_batch = (
@@ -450,6 +458,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                 batch_size=experiment["eval_batch_size"],
             )
 
+        update_accepted = int(any(route != "reject" for route in accepted_routes))
         server_state = _state_to_cpu(next_state)
         snapshots[event.new_server_version] = server_state
         event_rows.append(
@@ -460,11 +469,17 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                 "base_version": event.base_version,
                 "arrival_version": event.arrival_version,
                 "staleness": event.staleness,
+                "group_id": event.group_id,
+                "group_version": event.group_version,
+                "group_position": event.group_position,
+                "buffer_size": event.buffer_size,
+                "group_closed": event.group_closed,
                 "method": accepted_method,
                 "measured": event_index >= experiment["warmup_returns"],
                 "local_loss": local_loss,
                 "current_loss": current_monitor_loss,
                 "accepted_loss": accepted_monitor_loss,
+                "update_accepted": update_accepted,
                 "harmful_update": (
                     accepted_monitor_loss > current_monitor_loss + 1e-12
                     if math.isfinite(current_monitor_loss)
@@ -515,6 +530,22 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
     peak_memory = (
         torch.cuda.max_memory_allocated() / (1024**3) if torch.cuda.is_available() else 0.0
     )
+    measured_rows = [
+        row
+        for row in event_rows
+        if row["measured"]
+        and math.isfinite(row["current_loss"])
+        and math.isfinite(row["accepted_loss"])
+    ]
+    late_deltas = [
+        row["accepted_loss"] - row["current_loss"]
+        for row in measured_rows
+        if row["staleness"] >= int(experiment.get("late_tau", 8))
+    ]
+    accepted_rows = [row for row in measured_rows if row["update_accepted"]]
+    accepted_utilities = [
+        row["current_loss"] - row["accepted_loss"] for row in accepted_rows
+    ]
     metrics = {
         "baseline_accuracy": baseline["accuracy"],
         "baseline_balanced_accuracy": baseline["balanced_accuracy"],
@@ -532,7 +563,9 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         "final_eos_nll": final["eos_nll"],
         "accuracy_change_pp": 100.0 * (final["accuracy"] - baseline["accuracy"]),
         "nll_change": final["nll"] - baseline["nll"],
-        "binary_nll_change": final["binary_nll"] - baseline["binary_nll"],
+        "binary_nll_change": _optional_difference(
+            final["binary_nll"], baseline["binary_nll"]
+        ),
         "mean_local_loss": _mean([row["local_loss"] for row in event_rows]),
         "mean_staleness": _mean([row["staleness"] for row in event_rows]),
         "harmful_update_rate": _mean(
@@ -554,6 +587,11 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                 and math.isfinite(row["accepted_loss"])
             ]
         ),
+        "acceptance_rate": _mean([row["update_accepted"] for row in measured_rows]),
+        "late_event_count": len(late_deltas),
+        "cumulative_late_harm": sum(max(delta, 0.0) for delta in late_deltas),
+        "worst_step_loss_increase": max(late_deltas, default=0.0),
+        "utility_per_accepted_update": _mean(accepted_utilities),
         "mean_rho_after_warmup": _mean(
             [row["rho"] for row in event_rows[experiment["warmup_returns"] :]]
         ),
@@ -571,7 +609,9 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         "method": method,
         "seed": seed,
         "model": config["model"]["name"],
-        "task": dataset_config.get("subset", dataset_config["hub_path"]),
+        "task": dataset_config.get(
+            "run_name", dataset_config.get("task", dataset_config["hub_path"])
+        ),
         "regime": experiment.get("regime_name", "default"),
         "git_commit": _git_commit(),
         "config": config,
@@ -681,11 +721,13 @@ def evaluate_classification(
     dataset_config: Mapping[str, Any],
     max_length: int,
     batch_size: int,
-) -> tuple[dict[str, float], list[dict[str, Any]]]:
+) -> tuple[dict[str, float | None], list[dict[str, Any]]]:
     model.eval()
     correct = 0
-    label_totals = {0: 0, 1: 0}
-    label_correct = {0: 0, 1: 0}
+    label_texts = _label_texts(dataset_config)
+    num_labels = len(label_texts)
+    label_totals = {label: 0 for label in range(num_labels)}
+    label_correct = {label: 0 for label in range(num_labels)}
     brier_scores: list[float] = []
     true_nlls: list[float] = []
     binary_nlls: list[float] = []
@@ -697,7 +739,11 @@ def evaluate_classification(
     examples = [(item, int(item[label_column])) for item in dataset]
     for start in range(0, len(examples), batch_size):
         group = examples[start : start + batch_size]
-        candidates = [(item, candidate) for item, _ in group for candidate in (0, 1)]
+        candidates = [
+            (item, candidate)
+            for item, _ in group
+            for candidate in range(num_labels)
+        ]
         batch = _collate_examples(
             tokenizer,
             candidates,
@@ -724,9 +770,9 @@ def evaluate_classification(
         label_mask = mask & ~eos_mask
         label_nll = (token_loss * label_mask).sum(dim=1) / label_mask.sum(dim=1).clamp_min(1)
         eos_nll = (token_loss * eos_mask).sum(dim=1) / eos_mask.sum(dim=1).clamp_min(1)
-        scores = nll.view(len(group), 2).cpu()
-        label_scores = label_nll.view(len(group), 2).cpu()
-        eos_scores = eos_nll.view(len(group), 2).cpu()
+        scores = nll.view(len(group), num_labels).cpu()
+        label_scores = label_nll.view(len(group), num_labels).cpu()
+        eos_scores = eos_nll.view(len(group), num_labels).cpu()
         probabilities = torch.softmax(-scores, dim=1)
         for offset, (row, label_row, eos_row, probs, (item, true_label)) in enumerate(
             zip(scores, label_scores, eos_scores, probabilities, group)
@@ -736,45 +782,61 @@ def evaluate_classification(
             label_totals[true_label] += 1
             label_correct[true_label] += int(prediction == true_label)
             true_nlls.append(float(row[true_label].item()))
-            binary_nll = float(-torch.log(probs[true_label].clamp_min(1e-12)).item())
-            binary_nlls.append(binary_nll)
-            brier = float((probs[1].item() - true_label) ** 2)
+            binary_nll = (
+                float(-torch.log(probs[true_label].clamp_min(1e-12)).item())
+                if num_labels == 2
+                else None
+            )
+            if binary_nll is not None:
+                binary_nlls.append(binary_nll)
+            target = torch.zeros_like(probs)
+            target[true_label] = 1.0
+            brier = float(torch.sum((probs - target) ** 2).item())
             brier_scores.append(brier)
             true_label_nlls.append(float(label_row[true_label].item()))
             true_eos_nlls.append(float(eos_row[true_label].item()))
-            wrong_label = 1 - true_label
-            detail_rows.append(
-                {
-                    "eval_index": start + offset,
-                    "text": _example_text_for_details(item, dataset_config),
-                    "task": dataset_config.get("subset", dataset_config["hub_path"]),
-                    "true_label": true_label,
-                    "predicted_label": prediction,
-                    "is_correct": int(prediction == true_label),
-                    "nll_label_0": float(row[0].item()),
-                    "nll_label_1": float(row[1].item()),
-                    "true_nll": float(row[true_label].item()),
-                    "binary_nll": binary_nll,
-                    "brier": brier,
-                    "label_nll": float(label_row[true_label].item()),
-                    "eos_nll": float(eos_row[true_label].item()),
-                    "wrong_nll": float(row[wrong_label].item()),
-                    "nll_margin": float(row[wrong_label].item() - row[true_label].item()),
-                    "prob_label_0": float(probs[0].item()),
-                    "prob_label_1": float(probs[1].item()),
-                    "true_probability": float(probs[true_label].item()),
-                    "prediction_confidence": float(probs[prediction].item()),
-                }
+            wrong_label = int(
+                torch.argmin(
+                    row.masked_fill(
+                        torch.arange(num_labels) == true_label,
+                        float("inf"),
+                    )
+                ).item()
             )
+            detail = {
+                "eval_index": start + offset,
+                "text": _example_text_for_details(item, dataset_config),
+                "task": dataset_config.get("task", dataset_config["hub_path"]),
+                "true_label": true_label,
+                "predicted_label": prediction,
+                "is_correct": int(prediction == true_label),
+                "true_nll": float(row[true_label].item()),
+                "binary_nll": binary_nll,
+                "brier": brier,
+                "label_nll": float(label_row[true_label].item()),
+                "eos_nll": float(eos_row[true_label].item()),
+                "wrong_nll": float(row[wrong_label].item()),
+                "nll_margin": float(row[wrong_label].item() - row[true_label].item()),
+                "true_probability": float(probs[true_label].item()),
+                "prediction_confidence": float(probs[prediction].item()),
+            }
+            for label in range(num_labels):
+                detail[f"nll_label_{label}"] = float(row[label].item())
+                detail[f"prob_label_{label}"] = float(probs[label].item())
+            detail_rows.append(detail)
     balanced_accuracy = _mean(
-        [label_correct[label] / label_totals[label] for label in (0, 1) if label_totals[label]]
+        [
+            label_correct[label] / label_totals[label]
+            for label in range(num_labels)
+            if label_totals[label]
+        ]
     )
     return {
         "accuracy": correct / len(examples),
         "balanced_accuracy": balanced_accuracy,
         "brier": _mean(brier_scores),
         "nll": _mean(true_nlls),
-        "binary_nll": _mean(binary_nlls),
+        "binary_nll": _mean(binary_nlls) if num_labels == 2 else None,
         "label_nll": _mean(true_label_nlls),
         "eos_nll": _mean(true_eos_nlls),
     }, detail_rows
@@ -1079,18 +1141,21 @@ def _collate_examples(
 
 
 def _label_texts(dataset_config: Mapping[str, Any]) -> list[str]:
+    task = str(dataset_config.get("task", dataset_config.get("subset", ""))).lower()
+    expected = 3 if task == "mnli" else 2
     configured = dataset_config.get("label_texts")
     if configured is not None:
-        if len(configured) != 2:
-            raise ValueError("label_texts must contain exactly two labels")
+        if len(configured) != expected:
+            raise ValueError(
+                f"{task} requires exactly {expected} label_texts, got {len(configured)}"
+            )
         return [str(value) for value in configured]
-    subset = str(dataset_config.get("subset", "")).lower()
-    if subset not in DEFAULT_LABEL_TEXTS:
+    if task not in DEFAULT_LABEL_TEXTS:
         raise ValueError(
-            "dataset.label_texts is required for unsupported binary task "
-            f"{dataset_config.get('subset')!r}"
+            "dataset.label_texts is required for unsupported classification task "
+            f"{task!r}"
         )
-    return DEFAULT_LABEL_TEXTS[subset]
+    return DEFAULT_LABEL_TEXTS[task]
 
 
 def _prompt_for_example(item: Mapping[str, Any], dataset_config: Mapping[str, Any]) -> str:
@@ -1102,12 +1167,19 @@ def _prompt_for_example(item: Mapping[str, Any], dataset_config: Mapping[str, An
             f"Review: {item[text_column]}\nSentiment:"
         )
     if task == "qnli":
-        question_column = dataset_config.get("question_column", "question")
-        sentence_column = dataset_config.get("sentence_column", "sentence")
+        question_column, sentence_column = _qnli_columns(dataset_config)
         return (
             "Answer whether the sentence contains the answer to the question.\n"
             f"Question: {item[question_column]}\n"
             f"Sentence: {item[sentence_column]}\nAnswer:"
+        )
+    if task == "mnli":
+        premise_column, hypothesis_column = _mnli_columns(dataset_config)
+        return (
+            "Classify the relationship between the premise and hypothesis as "
+            "entailment, neutral, or contradiction.\n"
+            f"Premise: {item[premise_column]}\n"
+            f"Hypothesis: {item[hypothesis_column]}\nRelationship:"
         )
     template = dataset_config.get("prompt_template")
     if template is None:
@@ -1123,9 +1195,16 @@ def _example_text_for_details(
     if task == "sst2":
         return str(item[dataset_config.get("text_column", "sentence")])
     if task == "qnli":
+        question_column, sentence_column = _qnli_columns(dataset_config)
         return (
-            f"Q: {item[dataset_config.get('question_column', 'question')]} "
-            f"S: {item[dataset_config.get('sentence_column', 'sentence')]}"
+            f"Q: {item[question_column]} "
+            f"S: {item[sentence_column]}"
+        )
+    if task == "mnli":
+        premise_column, hypothesis_column = _mnli_columns(dataset_config)
+        return (
+            f"P: {item[premise_column]} "
+            f"H: {item[hypothesis_column]}"
         )
     text_column = dataset_config.get("text_column")
     return str(item[text_column]) if text_column is not None else str(dict(item))
@@ -1198,6 +1277,15 @@ def _mean(values: Sequence[float | int]) -> float:
     return float(sum(values) / len(values)) if values else 0.0
 
 
+def _optional_difference(
+    left: float | None,
+    right: float | None,
+) -> float | None:
+    if left is None or right is None:
+        return None
+    return left - right
+
+
 def _git_commit() -> str:
     try:
         return subprocess.check_output(
@@ -1241,18 +1329,42 @@ def _apply_overrides(config: dict[str, Any], args: argparse.Namespace) -> None:
 
 
 def _validate_config(config: Mapping[str, Any], method: str) -> None:
+    config = _resolve_single_regime_config(config)
     experiment = config["experiment"]
     dataset = config["dataset"]
+    model = config["model"]
     num_clients = experiment["num_clients"]
     if method not in METHODS:
         raise ValueError(f"unsupported method: {method}")
+    if "target_modules" not in model:
+        raise ValueError(
+            "3B runner requires model.target_modules; legacy week4 BERT configs "
+            "use target_suffixes and must be run with their original runner"
+        )
+    for field in ("max_train_examples", "eval_examples"):
+        if field not in dataset:
+            raise ValueError(f"3B runner requires dataset.{field}")
     task = str(dataset.get("task", dataset.get("subset", ""))).lower()
     if task == "sst2" and "text_column" not in dataset:
         raise ValueError("SST-2 config requires text_column")
-    if task == "qnli" and (
-        "question_column" not in dataset or "sentence_column" not in dataset
-    ):
-        raise ValueError("QNLI config requires question_column and sentence_column")
+    if task == "qnli":
+        has_legacy_pair = "question_column" in dataset and "sentence_column" in dataset
+        has_text_pair = "text_column" in dataset and "text_pair_column" in dataset
+        if not (has_legacy_pair or has_text_pair):
+            raise ValueError(
+                "QNLI config requires either question_column/sentence_column "
+                "or text_column/text_pair_column"
+            )
+    if task == "mnli":
+        has_named_pair = "premise_column" in dataset and "hypothesis_column" in dataset
+        has_text_pair = "text_column" in dataset and "text_pair_column" in dataset
+        if not (has_named_pair or has_text_pair):
+            raise ValueError(
+                "MNLI config requires premise_column/hypothesis_column "
+                "or text_column/text_pair_column"
+            )
+        if len(_label_texts(dataset)) != 3:
+            raise ValueError("MNLI requires exactly three label_texts")
     if experiment.get("partition_mode", "label_shard") not in {"iid", "label_shard"}:
         raise ValueError("partition_mode must be 'iid' or 'label_shard'")
     if len(experiment["client_ranks"]) != num_clients:
@@ -1265,6 +1377,16 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
         raise ValueError("adaptive_max_rank cannot exceed server_max_rank")
     if experiment["warmup_returns"] < 1 or experiment["collected_returns"] < 1:
         raise ValueError("warmup_returns and collected_returns must be positive")
+    if int(experiment.get("buffer_size", 1)) != 1:
+        raise ValueError(
+            "run_kaggle_3b currently applies one returned update at a time; "
+            "use buffer_size=1 for classification runs until grouped state "
+            "aggregation is implemented in the model runner"
+        )
+    if str(experiment.get("schedule_mode", "async")) != "async":
+        raise ValueError(
+            "run_kaggle_3b currently supports schedule_mode='async' only"
+        )
     if int(experiment.get("monitor_examples", 0)) <= 0:
         raise ValueError("monitor_examples must be positive to compute harmful metrics")
     if method in {"rift", "spectral_filter"} and int(
@@ -1282,6 +1404,7 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
 
 
 def _dry_run_summary(config: Mapping[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    config = _resolve_single_regime_config(config)
     experiment = config["experiment"]
     clients = [
         ClientProfile(
@@ -1293,7 +1416,12 @@ def _dry_run_summary(config: Mapping[str, Any], args: argparse.Namespace) -> dic
         for index, rank in enumerate(experiment["client_ranks"])
     ]
     total = experiment["warmup_returns"] + experiment["collected_returns"]
-    trace = AsyncEventSimulator(clients, seed=args.seed).run(max_returns=total)
+    trace = AsyncEventSimulator(
+        clients,
+        seed=args.seed,
+        buffer_size=int(experiment.get("buffer_size", 1)),
+        schedule_mode=str(experiment.get("schedule_mode", "async")),
+    ).run(max_returns=total)
     return {
         "valid": True,
         "method": args.method,
@@ -1303,10 +1431,74 @@ def _dry_run_summary(config: Mapping[str, Any], args: argparse.Namespace) -> dic
         "returns": total,
         "mean_staleness": _mean(trace.staleness_values),
         "max_staleness": max(trace.staleness_values),
+        "buffer_size": int(experiment.get("buffer_size", 1)),
+        "schedule_mode": str(experiment.get("schedule_mode", "async")),
+        "groups": len(trace.groups),
         "server_max_rank": experiment["server_max_rank"],
         "partition_mode": experiment.get("partition_mode", "label_shard"),
         "load_in_4bit": config["model"]["load_in_4bit"],
     }
+
+
+def _qnli_columns(dataset_config: Mapping[str, Any]) -> tuple[str, str]:
+    question_column = str(dataset_config.get("question_column", dataset_config.get("text_column", "question")))
+    sentence_column = str(
+        dataset_config.get("sentence_column", dataset_config.get("text_pair_column", "sentence"))
+    )
+    return question_column, sentence_column
+
+
+def _mnli_columns(dataset_config: Mapping[str, Any]) -> tuple[str, str]:
+    premise_column = str(
+        dataset_config.get("premise_column", dataset_config.get("text_column", "premise"))
+    )
+    hypothesis_column = str(
+        dataset_config.get(
+            "hypothesis_column", dataset_config.get("text_pair_column", "hypothesis")
+        )
+    )
+    return premise_column, hypothesis_column
+
+
+def _resolve_single_regime_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    resolved = copy.deepcopy(dict(config))
+    experiment = resolved.get("experiment")
+    if not isinstance(experiment, dict):
+        return resolved
+    if "client_ranks" in experiment and "compute_times" in experiment:
+        return resolved
+    regimes = experiment.get("regimes")
+    if not isinstance(regimes, list) or len(regimes) != 1:
+        missing = [
+            name
+            for name in ("client_ranks", "compute_times")
+            if name not in experiment
+        ]
+        if missing:
+            raise ValueError(
+                "experiment requires explicit "
+                + ", ".join(missing)
+                + " or a single regime entry"
+            )
+        return resolved
+    regime = dict(regimes[0])
+    if "client_ranks" not in experiment:
+        ranks = regime.get("client_ranks", regime.get("ranks"))
+        if ranks is None:
+            raise ValueError("single regime config requires client_ranks or ranks")
+        experiment["client_ranks"] = list(ranks)
+    if "compute_times" not in experiment:
+        compute_times = regime.get("compute_times")
+        if compute_times is None:
+            raise ValueError("single regime config requires compute_times")
+        experiment["compute_times"] = list(compute_times)
+    if "partition_mode" not in experiment:
+        partition_mode = regime.get("partition_mode", regime.get("partition"))
+        if partition_mode is not None:
+            experiment["partition_mode"] = partition_mode
+    if "regime_name" not in experiment and "name" in regime:
+        experiment["regime_name"] = regime["name"]
+    return resolved
 
 
 if __name__ == "__main__":

@@ -842,6 +842,8 @@ Core files:
 - `scripts/run_week4_competitor_matrix.py`
 - `scripts/analyze_week4_rift.py`
 - `scripts/analyze_week4_competitors.py`
+- `scripts/run_week8_classification_matrix.py`
+- `scripts/analyze_kaggle_3b_rift_competitors.py`
 
 Result docs:
 
@@ -883,6 +885,7 @@ configs/
   week4_rift_qnli_confirmation.json
   week4_rift_competitor_matrix.json
   kaggle_3b_*.json
+  week8_rift_classification_matrix.json
 
 notebooks/
   kaggle_qwen_3b_*.ipynb
@@ -1144,7 +1147,7 @@ Exit criterion:
 
 Deliverables:
 
-- SST-2, QNLI, MNLI-m/mm if feasible;
+- SST-2, QNLI, MNLI-m/mm if the multiclass evaluator is validated;
 - 6-10 seeds;
 - hard slices: non-IID + high staleness + heterogeneous rank;
 - paired statistical report.
@@ -1152,6 +1155,17 @@ Deliverables:
 Exit criterion:
 
 - RIFT improves late harm and is non-inferior on final loss/accuracy.
+
+Current status:
+
+- infrastructure ready: task/regime/method/seed overlay runner, QNLI column compatibility,
+  paired CI95 analyzer, completeness guard, acceptance gate, and hard-slice verdict
+  are implemented;
+- GPU matrix is pending, so Week 8 has not yet earned a final empirical GO;
+- MNLI-m/mm evaluator is implemented with three-way label scoring, but its claim
+  remains conditional on matched/mismatched validation and calibration checks;
+- the 3B model runner intentionally uses immediate async `buffer_size=1` until
+  grouped model-state aggregation is implemented and tested.
 
 ## Week 9 - Generative/NLL matrix
 

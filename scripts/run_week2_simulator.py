@@ -30,6 +30,7 @@ def main() -> None:
         clients,
         seed=config["seed"],
         buffer_size=config["buffer_size"],
+        schedule_mode=config.get("schedule_mode", "async"),
     )
     trace = simulator.run(max_returns=config["max_returns"])
 
@@ -40,6 +41,20 @@ def main() -> None:
         "staleness_values": trace.staleness_values,
         "staleness_histogram": trace.staleness_histogram(),
         "records": [record.__dict__ for record in trace.records],
+        "groups": [
+            {
+                "group_id": group.group_id,
+                "group_version": group.group_version,
+                "server_version_after": group.server_version_after,
+                "first_arrival_time": group.first_arrival_time,
+                "aggregation_time": group.aggregation_time,
+                "closed": group.closed,
+                "size": group.size,
+                "client_ids": group.client_ids,
+                "staleness_values": group.staleness_values,
+            }
+            for group in trace.groups
+        ],
     }
     print(json.dumps(output, indent=2, ensure_ascii=False))
 

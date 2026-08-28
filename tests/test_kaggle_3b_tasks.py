@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
+
+import torch
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "run_kaggle_3b.py"
@@ -47,3 +50,90 @@ def test_sst2_prompt_uses_sentence() -> None:
 
     assert "Review: warm and smart" in prompt
     assert MODULE._label_texts(config) == [" negative", " positive"]
+
+
+def test_mnli_prompt_uses_three_labels_and_pair_columns() -> None:
+    config = {
+        "hub_path": "nyu-mll/glue",
+        "subset": "mnli",
+        "task": "mnli",
+        "premise_column": "premise",
+        "hypothesis_column": "hypothesis",
+        "label_column": "label",
+        "label_texts": [" entailment", " neutral", " contradiction"],
+    }
+    item = {
+        "premise": "A person is reading a book.",
+        "hypothesis": "Someone is reading.",
+        "label": 0,
+    }
+
+    prompt = MODULE._prompt_for_example(item, config)
+
+    assert "Premise: A person is reading" in prompt
+    assert "Hypothesis: Someone is reading" in prompt
+    assert MODULE._label_texts(config) == [
+        " entailment",
+        " neutral",
+        " contradiction",
+    ]
+
+
+def test_mnli_evaluator_supports_three_class_scores() -> None:
+    class FakeTokenizer:
+        eos_token = "<eos>"
+        eos_token_id = 4
+        pad_token_id = 0
+
+        def __call__(self, text, *, add_special_tokens):
+            token = {
+                " entailment": 2,
+                " neutral": 3,
+                " contradiction": 5,
+                "<eos>": 4,
+            }.get(text, 1)
+            if isinstance(token, int):
+                ids = [token]
+            else:
+                ids = token
+            return {"input_ids": ([1] + ids) if add_special_tokens else ids}
+
+    class FakeModel:
+        def eval(self):
+            return self
+
+        def get_input_embeddings(self):
+            return SimpleNamespace(weight=torch.zeros(1))
+
+        def __call__(self, *, input_ids, attention_mask):
+            shape = (*input_ids.shape, 8)
+            return SimpleNamespace(logits=torch.zeros(shape))
+
+    config = {
+        "hub_path": "nyu-mll/glue",
+        "subset": "mnli",
+        "task": "mnli",
+        "premise_column": "premise",
+        "hypothesis_column": "hypothesis",
+        "label_column": "label",
+        "label_texts": [" entailment", " neutral", " contradiction"],
+    }
+    dataset = [
+        {"premise": "p1", "hypothesis": "h1", "label": 0},
+        {"premise": "p2", "hypothesis": "h2", "label": 1},
+        {"premise": "p3", "hypothesis": "h3", "label": 2},
+    ]
+
+    metrics, details = MODULE.evaluate_classification(
+        FakeModel(),
+        FakeTokenizer(),
+        dataset,
+        dataset_config=config,
+        max_length=16,
+        batch_size=3,
+    )
+
+    assert metrics["binary_nll"] is None
+    assert 0.0 <= metrics["brier"] <= 2.0
+    assert len(details) == 3
+    assert "prob_label_2" in details[0]

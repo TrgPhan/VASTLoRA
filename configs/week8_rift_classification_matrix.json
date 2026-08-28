@@ -1,0 +1,102 @@
+{
+  "name": "riftlora-week8-classification-matrix",
+  "description": "Week 8 main classification matrix for SST-2, QNLI, and MNLI matched/mismatched under IID, IID heterogeneous, and non-IID high-staleness slices.",
+  "runner": {
+    "script": "scripts/run_kaggle_3b.py",
+    "buffer_size": 1,
+    "schedule_mode": "async"
+  },
+  "tasks": [
+    {
+      "name": "sst2",
+      "base_config": "configs/kaggle_3b_rift_competitors.json",
+      "output_prefix": "outputs/week8_sst2_matrix"
+    },
+    {
+      "name": "qnli",
+      "base_config": "configs/kaggle_3b_rift_competitors.json",
+      "output_prefix": "outputs/week8_qnli_matrix",
+      "subset": "qnli",
+      "task": "qnli",
+      "validation_split": "validation",
+      "question_column": "question",
+      "sentence_column": "sentence",
+      "label_column": "label",
+      "label_texts": [" yes", " no"],
+      "max_train_examples": 4096,
+      "eval_examples": 256
+    },
+    {
+      "name": "mnli_m",
+      "base_config": "configs/kaggle_3b_rift_competitors.json",
+      "output_prefix": "outputs/week8_mnli_m_matrix",
+      "run_name": "mnli_m",
+      "subset": "mnli",
+      "task": "mnli",
+      "validation_split": "validation_matched",
+      "premise_column": "premise",
+      "hypothesis_column": "hypothesis",
+      "label_column": "label",
+      "label_texts": [" entailment", " neutral", " contradiction"],
+      "max_train_examples": 4096,
+      "eval_examples": 512
+    },
+    {
+      "name": "mnli_mm",
+      "base_config": "configs/kaggle_3b_rift_competitors.json",
+      "output_prefix": "outputs/week8_mnli_mm_matrix",
+      "run_name": "mnli_mm",
+      "subset": "mnli",
+      "task": "mnli",
+      "validation_split": "validation_mismatched",
+      "premise_column": "premise",
+      "hypothesis_column": "hypothesis",
+      "label_column": "label",
+      "label_texts": [" entailment", " neutral", " contradiction"],
+      "max_train_examples": 4096,
+      "eval_examples": 512
+    }
+  ],
+  "regimes": [
+    {
+      "name": "iid_homogeneous",
+      "partition_mode": "iid",
+      "client_ranks": [8, 8, 8, 8, 8, 8, 8, 8, 8, 8],
+      "compute_times": [1.0, 1.0, 1.1, 1.1, 1.2, 1.2, 1.3, 1.3, 1.4, 1.4]
+    },
+    {
+      "name": "iid_heterogeneous",
+      "partition_mode": "iid",
+      "client_ranks": [4, 8, 16, 4, 8, 16, 4, 8, 16, 8],
+      "compute_times": [1.0, 1.1, 1.2, 1.5, 1.8, 2.2, 2.8, 3.4, 4.2, 5.5]
+    },
+    {
+      "name": "noniid_high_staleness",
+      "partition_mode": "label_shard",
+      "client_ranks": [4, 8, 16, 4, 8, 16, 4, 8, 16, 8],
+      "compute_times": [1.0, 1.2, 1.8, 2.8, 4.0, 6.0, 9.0, 13.0, 18.0, 25.0]
+    }
+  ],
+  "methods": [
+    "raw",
+    "fedex",
+    "freshness",
+    "fedrot",
+    "vast",
+    "mtip_adaptive",
+    "alignfed_calibration",
+    "rift"
+  ],
+  "seeds": [4101, 4102, 4103, 4104, 4105, 4106],
+  "gates": {
+    "minimum_paired_seeds": 6,
+    "hard_regimes": ["noniid_high_staleness"],
+    "accuracy_noninferiority_margin_pp": -0.5,
+    "nll_noninferiority_margin": -0.005,
+    "requires_positive_late_harm_reduction": true
+  },
+  "notes": [
+    "MNLI-m/mm uses the three-way generative evaluator; confirm label calibration before treating it as a primary claim.",
+    "This manifest is for the main thesis matrix and does not imply a full buffered model-runner implementation."
+  ]
+}

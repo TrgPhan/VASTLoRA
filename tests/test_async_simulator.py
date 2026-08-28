@@ -41,8 +41,36 @@ def test_buffered_async_increments_version_only_when_buffer_is_full() -> None:
 
     aggregated_flags = [record.aggregated for record in trace.records]
     versions = [record.new_server_version for record in trace.records]
+    group_ids = [record.group_id for record in trace.records]
+    group_versions = [record.group_version for record in trace.records]
     assert aggregated_flags == [False, True, False, True, False, True]
     assert versions == [0, 1, 1, 2, 2, 3]
+    assert group_ids == [0, 0, 1, 1, 2, 2]
+    assert group_versions == [0, 0, 1, 1, 2, 2]
+    assert [group.size for group in trace.completed_groups] == [2, 2, 2]
+
+
+def test_buffered_async_keeps_partial_group_metadata() -> None:
+    sim = AsyncEventSimulator(_clients(), seed=1, buffer_size=4)
+
+    trace = sim.run(max_returns=5)
+
+    assert [record.group_id for record in trace.records] == [0, 0, 0, 0, 1]
+    assert [record.group_position for record in trace.records] == [1, 2, 3, 4, 1]
+    assert [record.group_closed for record in trace.records] == [False, False, False, True, False]
+    assert trace.pending_groups[-1].size == 1
+    assert trace.pending_groups[-1].closed is False
+
+
+def test_cohort_schedule_dispatches_same_version_group() -> None:
+    sim = AsyncEventSimulator(_clients(), seed=3, buffer_size=2, schedule_mode="cohort")
+
+    trace = sim.run(max_returns=4)
+
+    assert trace.staleness_values == (0, 0, 0, 0)
+    assert [record.group_id for record in trace.records] == [0, 0, 1, 1]
+    assert [record.group_closed for record in trace.records] == [False, True, False, True]
+    assert [group.server_version_after for group in trace.completed_groups] == [1, 2]
 
 
 def test_snapshot_store_keeps_versioned_payloads() -> None:

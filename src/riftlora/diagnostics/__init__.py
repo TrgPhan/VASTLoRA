@@ -26,10 +26,15 @@ from riftlora.diagnostics.objective import (
     paired_loss_gate,
 )
 from riftlora.diagnostics.competitors import (
+    COMPETITOR_SPECS,
+    CompetitorSpec,
     ProjectedCompetitorUpdate,
+    competitor_description,
+    competitor_fidelity,
     dense_state_difference,
     fedrot_aggregate_diagnostic_state,
     fedsteer_cached_vector_projection,
+    fedex_exact_diagnostic_state,
     glora_cached_consensus_projection,
 )
 
@@ -38,6 +43,8 @@ __all__ = [
     "PersistentProjectionResult",
     "PairedGateResult",
     "RankwiseFilterResult",
+    "CompetitorSpec",
+    "COMPETITOR_SPECS",
     "ProjectedCompetitorUpdate",
     "REQUIRED_DIAGNOSTIC_COLUMNS",
     "analyze_scope",
@@ -45,7 +52,10 @@ __all__ = [
     "decide_gate",
     "matched_tau_analysis",
     "partial_spearman",
+    "competitor_description",
+    "competitor_fidelity",
     "filter_rankwise_by_gradient",
+    "fedex_exact_diagnostic_state",
     "dense_state_difference",
     "fedrot_aggregate_diagnostic_state",
     "fedsteer_cached_vector_projection",

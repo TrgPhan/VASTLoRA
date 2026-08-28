@@ -1,6 +1,8 @@
-﻿import torch
+import torch
 
 from riftlora.diagnostics.competitors import (
+    COMPETITOR_SPECS,
+    fedex_exact_diagnostic_state,
     fedrot_aggregate_diagnostic_state,
     fedsteer_cached_vector_projection,
     glora_cached_consensus_projection,
@@ -35,8 +37,25 @@ def test_fedrot_alignment_preserves_equivalent_rotated_factorization() -> None:
     torch.testing.assert_close(result["layer"], server["layer"], rtol=1e-5, atol=1e-5)
 
 
+def test_fedex_exact_state_is_dense_difference() -> None:
+    before = {"layer": torch.tensor([[1.0, 2.0]])}
+    after = {"layer": torch.tensor([[2.5, 1.0]])}
+
+    result = fedex_exact_diagnostic_state(after, before)
+
+    torch.testing.assert_close(result["layer"], torch.tensor([[1.5, -1.0]]))
+
+
+def test_competitor_registry_exposes_documented_labels() -> None:
+    assert COMPETITOR_SPECS["fedex"].fidelity.startswith("faithful exact")
+    assert COMPETITOR_SPECS["fedrot"].fidelity.startswith("matched FedRot")
+    assert COMPETITOR_SPECS["alignfed_calibration"].fidelity.endswith("AlignFed")
+
+
 def test_glora_cached_consensus_uses_left_projector() -> None:
-    cached = compact_svd(LowRankMatrix(torch.tensor([[1.0], [0.0]]), torch.tensor([[1.0, 0.0]])))
+    cached = compact_svd(
+        LowRankMatrix(torch.tensor([[1.0], [0.0]]), torch.tensor([[1.0, 0.0]]))
+    )
     current = LowRankMatrix(torch.eye(2), torch.eye(2))
 
     result = glora_cached_consensus_projection(
@@ -52,7 +71,9 @@ def test_glora_cached_consensus_uses_left_projector() -> None:
 
 
 def test_fedsteer_cached_vector_projection_filters_orthogonal_component() -> None:
-    cached = compact_svd(LowRankMatrix(torch.tensor([[1.0], [0.0]]), torch.tensor([[1.0, 0.0]])))
+    cached = compact_svd(
+        LowRankMatrix(torch.tensor([[1.0], [0.0]]), torch.tensor([[1.0, 0.0]]))
+    )
     current = LowRankMatrix(torch.eye(2), torch.eye(2))
 
     result = fedsteer_cached_vector_projection(
@@ -65,4 +86,3 @@ def test_fedsteer_cached_vector_projection_filters_orthogonal_component() -> Non
         result.updates["layer"], torch.tensor([[1.0, 0.0], [0.0, 0.0]])
     )
     assert result.ranks["layer"] == 1
-

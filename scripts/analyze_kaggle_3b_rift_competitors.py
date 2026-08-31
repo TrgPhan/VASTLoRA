@@ -149,6 +149,7 @@ def load_results(input_dir: Path) -> pd.DataFrame:
     records: list[dict[str, Any]] = []
     for path in sorted(input_dir.rglob("*_seed*/result.json")):
         payload = json.loads(path.read_text(encoding="utf-8"))
+        metrics = payload["metrics"]
         records.append(
             {
                 "method": payload["method"],
@@ -158,7 +159,12 @@ def load_results(input_dir: Path) -> pd.DataFrame:
                 "task": payload.get("task", payload.get("config", {}).get("dataset", {}).get("subset", "unknown")),
                 "regime": payload.get("regime", payload.get("config", {}).get("experiment", {}).get("regime_name", "default")),
                 "git_commit": payload["git_commit"],
-                **payload["metrics"],
+                **metrics,
+                # Schema v2 supplies label NLL explicitly.  Fall back to the
+                # old total NLL so historical pilot outputs remain readable.
+                "classification_nll": metrics.get(
+                    "final_label_nll", metrics["final_nll"]
+                ),
             }
         )
     if not records:
@@ -180,7 +186,10 @@ def summarize(frame: pd.DataFrame) -> pd.DataFrame:
                 "final_accuracy_std": float(group["final_accuracy"].std(ddof=1))
                 if len(group) > 1
                 else 0.0,
-                "final_nll_mean": float(group["final_nll"].mean()),
+                # Classification comparisons use label NLL.  Sequence NLL
+                # includes EOS and is retained as a diagnostic only.
+                "final_nll_mean": float(group["classification_nll"].mean()),
+                "sequence_nll_mean": float(group["final_nll"].mean()),
                 "final_binary_nll_mean": float(group["final_binary_nll"].mean()),
                 "final_brier_mean": float(group["final_brier"].mean()),
                 "harmful_update_rate": float(group.get("harmful_update_rate", pd.Series([0.0])).mean()),
@@ -237,7 +246,10 @@ def paired_against(frame: pd.DataFrame, target: str) -> pd.DataFrame:
         accuracy_delta = 100.0 * (
             joined["final_accuracy_target"] - joined["final_accuracy_candidate"]
         )
-        nll_delta = joined["final_nll_candidate"] - joined["final_nll_target"]
+        nll_delta = (
+            joined["classification_nll_candidate"]
+            - joined["classification_nll_target"]
+        )
         binary_target = pd.to_numeric(
             joined["final_binary_nll_target"], errors="coerce"
         )
@@ -286,7 +298,10 @@ def paired_against(frame: pd.DataFrame, target: str) -> pd.DataFrame:
                 "target_nll_reduction_ci95_low": nll_low,
                 "target_nll_reduction_ci95_high": nll_high,
                 "target_nll_wins": int(
-                    (joined["final_nll_target"] < joined["final_nll_candidate"]).sum()
+                    (
+                        joined["classification_nll_target"]
+                        < joined["classification_nll_candidate"]
+                    ).sum()
                 ),
                 "target_binary_nll_reduction": binary_mean,
                 "target_binary_nll_reduction_ci95_low": binary_low,
@@ -439,6 +454,8 @@ def render_report(
     lines.extend(
         [
             "## Method Summary",
+            "",
+            "The Loss column is label NLL; sequence NLL is retained as a diagnostic.",
             "",
             "| Task | Regime | Method | Fidelity | Seeds | Accuracy | Loss | Harmful | Late harmful | Acceptance |",
             "|---|---|---|---|---:|---:|---:|---:|---:|---:|",

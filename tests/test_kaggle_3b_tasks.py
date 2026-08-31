@@ -137,3 +137,53 @@ def test_mnli_evaluator_supports_three_class_scores() -> None:
     assert 0.0 <= metrics["brier"] <= 2.0
     assert len(details) == 3
     assert "prob_label_2" in details[0]
+
+
+def test_classification_uses_label_loss_not_eos_loss() -> None:
+    class FakeTokenizer:
+        eos_token = "<eos>"
+        eos_token_id = 4
+        pad_token_id = 0
+
+        def __call__(self, text, *, add_special_tokens):
+            if add_special_tokens:
+                return {"input_ids": [1]}
+            tokens = {" yes<eos>": [2, 4], " no<eos>": [3, 4]}
+            return {"input_ids": tokens[text]}
+
+    class FakeModel:
+        def eval(self):
+            return self
+
+        def get_input_embeddings(self):
+            return SimpleNamespace(weight=torch.zeros(1))
+
+        def __call__(self, *, input_ids, attention_mask):
+            logits = torch.zeros((*input_ids.shape, 8))
+            # Label 0 is better at the label position, while its EOS is worse.
+            logits[:, 0, 2] = 10.0
+            logits[:, 0, 3] = 8.0
+            for row in range(input_ids.shape[0]):
+                logits[row, 1, 4] = 10.0 if input_ids[row, 1].item() == 3 else -10.0
+            return SimpleNamespace(logits=logits)
+
+    config = {
+        "hub_path": "nyu-mll/glue",
+        "subset": "qnli",
+        "task": "qnli",
+        "question_column": "question",
+        "sentence_column": "sentence",
+        "label_column": "label",
+        "label_texts": [" yes", " no"],
+    }
+    metrics, details = MODULE.evaluate_classification(
+        FakeModel(),
+        FakeTokenizer(),
+        [{"question": "q", "sentence": "s", "label": 0}],
+        dataset_config=config,
+        max_length=16,
+        batch_size=1,
+    )
+
+    assert metrics["binary_nll"] is not None
+    assert details[0]["predicted_label"] == 0

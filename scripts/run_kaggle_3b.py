@@ -588,6 +588,16 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
             ]
         ),
         "acceptance_rate": _mean([row["update_accepted"] for row in measured_rows]),
+        "client_return_coverage": _mean(
+            [
+                any(int(row["client_id"]) == client_id for row in event_rows)
+                for client_id in range(int(experiment["num_clients"]))
+            ]
+        ),
+        "min_client_returns": min(
+            sum(int(row["client_id"]) == client_id for row in event_rows)
+            for client_id in range(int(experiment["num_clients"]))
+        ),
         "late_event_count": len(late_deltas),
         "cumulative_late_harm": sum(max(delta, 0.0) for delta in late_deltas),
         "worst_step_loss_increase": max(late_deltas, default=0.0),
@@ -605,7 +615,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         "peak_cuda_memory_gib": peak_memory,
     }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "method": method,
         "seed": seed,
         "model": config["model"]["name"],
@@ -700,7 +710,26 @@ def _train_client(
                 max_length=max_length,
             )
             batch = _move_batch(batch, _model_input_device(model))
-            loss = model(**batch).loss / gradient_accumulation_steps
+            outputs = model(
+                input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+            )
+            shifted_logits = outputs.logits[:, :-1, :].float()
+            shifted_labels = batch["labels"][:, 1:]
+            token_loss = F.cross_entropy(
+                shifted_logits.transpose(1, 2),
+                shifted_labels,
+                ignore_index=-100,
+                reduction="none",
+            )
+            label_mask = shifted_labels.ne(-100)
+            if tokenizer.eos_token_id is not None:
+                label_mask &= shifted_labels.ne(tokenizer.eos_token_id)
+            loss = (
+                (token_loss * label_mask).sum()
+                / label_mask.sum().clamp_min(1)
+                / gradient_accumulation_steps
+            )
             if not torch.isfinite(loss):
                 raise RuntimeError(f"non-finite local loss: {float(loss)}")
             loss.backward()
@@ -773,11 +802,13 @@ def evaluate_classification(
         scores = nll.view(len(group), num_labels).cpu()
         label_scores = label_nll.view(len(group), num_labels).cpu()
         eos_scores = eos_nll.view(len(group), num_labels).cpu()
-        probabilities = torch.softmax(-scores, dim=1)
+        # Classification must compare candidate label likelihoods.  Including
+        # EOS in the decision makes formatting likelihood dominate the task.
+        probabilities = torch.softmax(-label_scores, dim=1)
         for offset, (row, label_row, eos_row, probs, (item, true_label)) in enumerate(
             zip(scores, label_scores, eos_scores, probabilities, group)
         ):
-            prediction = int(torch.argmin(row).item())
+            prediction = int(torch.argmin(label_row).item())
             correct += int(prediction == true_label)
             label_totals[true_label] += 1
             label_correct[true_label] += int(prediction == true_label)
@@ -797,7 +828,7 @@ def evaluate_classification(
             true_eos_nlls.append(float(eos_row[true_label].item()))
             wrong_label = int(
                 torch.argmin(
-                    row.masked_fill(
+                    label_row.masked_fill(
                         torch.arange(num_labels) == true_label,
                         float("inf"),
                     )
@@ -815,13 +846,15 @@ def evaluate_classification(
                 "brier": brier,
                 "label_nll": float(label_row[true_label].item()),
                 "eos_nll": float(eos_row[true_label].item()),
-                "wrong_nll": float(row[wrong_label].item()),
-                "nll_margin": float(row[wrong_label].item() - row[true_label].item()),
+                "wrong_nll": float(label_row[wrong_label].item()),
+                "nll_margin": float(
+                    label_row[wrong_label].item() - label_row[true_label].item()
+                ),
                 "true_probability": float(probs[true_label].item()),
                 "prediction_confidence": float(probs[prediction].item()),
             }
             for label in range(num_labels):
-                detail[f"nll_label_{label}"] = float(row[label].item())
+                detail[f"nll_label_{label}"] = float(label_row[label].item())
                 detail[f"prob_label_{label}"] = float(probs[label].item())
             detail_rows.append(detail)
     balanced_accuracy = _mean(
@@ -905,8 +938,11 @@ def _per_example_classification_losses(
                 reduction="none",
             )
             mask = shifted_labels.ne(-100)
+            label_mask = mask
+            if tokenizer.eos_token_id is not None:
+                label_mask &= shifted_labels.ne(tokenizer.eos_token_id)
             values.append(
-                ((token_loss * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1))
+                ((token_loss * label_mask).sum(dim=1) / label_mask.sum(dim=1).clamp_min(1))
                 .detach()
                 .cpu()
             )

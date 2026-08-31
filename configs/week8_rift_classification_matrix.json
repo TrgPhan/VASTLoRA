@@ -6,6 +6,9 @@
     "buffer_size": 1,
     "schedule_mode": "async"
   },
+  "experiment": {
+    "collected_returns": 92
+  },
   "tasks": [
     {
       "name": "sst2",

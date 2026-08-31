@@ -132,6 +132,8 @@ def _build_config(
     experiment = config["experiment"]
     experiment.update(
         {
+            "methods": list(matrix["methods"]),
+            "seeds": [int(seed) for seed in matrix["seeds"]],
             "num_clients": len(regime["client_ranks"]),
             "client_ranks": list(regime["client_ranks"]),
             "compute_times": list(regime["compute_times"]),
@@ -141,6 +143,15 @@ def _build_config(
             "schedule_mode": str(matrix["runner"].get("schedule_mode", "async")),
         }
     )
+    if "experiment" in matrix:
+        experiment.update(matrix["experiment"])
+    # Keep the embedded provenance aligned with the matrix that generated the
+    # run; the base competitor config also contains an older task matrix.
+    config["task_matrix"] = {
+        "tasks": json.loads(json.dumps(matrix["tasks"])),
+        "regimes": json.loads(json.dumps(matrix["regimes"])),
+        "methods": list(matrix["methods"]),
+    }
     return config
 
 

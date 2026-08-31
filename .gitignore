@@ -7,3 +7,5 @@ __pycache__/
 outputs/*
 !outputs/.gitkeep
 outputs.zip
+kaggle.json
+kaggle_download/

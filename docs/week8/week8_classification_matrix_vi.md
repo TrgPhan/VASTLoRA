@@ -7,7 +7,9 @@ Status: infrastructure ready, GPU matrix pending
 - Task chinh: SST-2, QNLI, MNLI-m va MNLI-mm.
 - Regime chinh: IID homogeneous, IID heterogeneous, non-IID high-staleness.
 - Seeds: 6 seed de co paired statistical report.
-- Metrics chinh: Accuracy, Loss/NLL, Harmful, Late harmful, Acceptance.
+- Metrics chinh: Accuracy, label NLL, Brier, Harmful, Late harmful, Acceptance.
+- Sequence NLL va EOS NLL duoc ghi rieng de chan doan; evaluator classification
+  chi dung label NLL, khong dung EOS de quyet dinh nhan.
 
 ## Da review
 
@@ -20,7 +22,8 @@ Status: infrastructure ready, GPU matrix pending
 - Week 7: buffered trace/group metadata da co, nhung model runner 3B hien tai van immediate async `buffer_size=1`.
 - MNLI-m/mm da duoc implement voi evaluator 3 lop: entailment, neutral, contradiction.
 - MNLI dung `validation_matched` va `validation_mismatched` rieng, voi `run_name` rieng de analyzer khong tron hai split.
-- `binary_nll` chi co y nghia voi SST-2/QNLI; MNLI dung `nll`, `label_nll`, Accuracy va multiclass Brier.
+- `binary_nll` chi co y nghia voi SST-2/QNLI; MNLI dung `label_nll`, Accuracy va multiclass Brier.
+  `sequence_nll` va `eos_nll` chi la metric chan doan.
 - Cac config `week4_*` la schema/backbone BERT nho, khong duoc dung lam base cho runner Qwen 3B.
 - Week 8 dung `kaggle_3b_rift_competitors.json` lam base va overlay task/regime bang script matrix.
 
@@ -31,6 +34,8 @@ Status: infrastructure ready, GPU matrix pending
 - 4 task views x 3 regimes x 8 methods x 6 seeds = 576 runs khi chay full matrix.
 - Analyzer tao paired CI95 va hard-slice verdict `GO`/`NO_GO`/`INCONCLUSIVE`.
 - Acceptance gate: RIFT phai giu acceptance rate toi thieu 30% tren measured updates.
+- Hard-slice schedule thu 100 returns (8 warmup + 92 measured) de moi logical
+  client co co hoi xuat hien; phan bo return van co the lech theo compute time.
 - Runner log them cumulative late harm, worst-step loss increase va utility per accepted update.
 - Paired statistical report voi CI95.
 - Hard-slice verdict cho non-IID + high staleness.

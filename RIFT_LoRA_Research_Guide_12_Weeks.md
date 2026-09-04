@@ -612,7 +612,8 @@ throughput.
 - BERT-tiny / DistilBERT-small;
 - GLUE tasks: SST-2, QNLI, MNLI-m/mm if time;
 - 10 logical clients;
-- 20-60 measured returns per seed.
+- 20-60 measured returns cho pilot; coverage confirmation co the dung toi 92
+  measured returns neu trace audit cho thay client cham chua xuat hien.
 
 ## Tier B - primary thesis evidence
 

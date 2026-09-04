@@ -187,3 +187,47 @@ def test_classification_uses_label_loss_not_eos_loss() -> None:
 
     assert metrics["binary_nll"] is not None
     assert details[0]["predicted_label"] == 0
+
+
+def test_label_histogram_is_stable_and_string_keyed() -> None:
+    assert MODULE._label_histogram([1, 0, 1, 2, 0, 1]) == {
+        "0": 2,
+        "1": 3,
+        "2": 1,
+    }
+
+
+def test_rift_gradient_batch_masks_eos_from_classification_objective() -> None:
+    class FakeTokenizer:
+        eos_token = "<eos>"
+        eos_token_id = 4
+        pad_token_id = 0
+
+        def __call__(self, text, *, add_special_tokens):
+            if add_special_tokens:
+                return {"input_ids": [1]}
+            return {"input_ids": [2, 4] if "negative" in text else [3, 4]}
+
+    class FakeModel:
+        def get_input_embeddings(self):
+            return SimpleNamespace(weight=torch.zeros(1))
+
+    config = {
+        "hub_path": "nyu-mll/glue",
+        "subset": "sst2",
+        "task": "sst2",
+        "text_column": "sentence",
+        "label_column": "label",
+        "label_texts": [" negative", " positive"],
+    }
+
+    batch = MODULE._make_classification_batch(
+        FakeModel(),
+        FakeTokenizer(),
+        [{"sentence": "bad", "label": 0}],
+        dataset_config=config,
+        max_length=16,
+    )
+
+    assert 2 in batch["labels"]
+    assert 4 not in batch["labels"]

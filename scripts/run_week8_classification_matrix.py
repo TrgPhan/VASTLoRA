@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -33,6 +34,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     matrix = json.loads(args.matrix.read_text(encoding="utf-8"))
+    matrix_sha256 = _matrix_fingerprint(matrix)
     methods = args.method or list(matrix["methods"])
     declared_methods = set(matrix["methods"])
     unknown_methods = sorted(set(methods) - declared_methods)
@@ -64,6 +66,13 @@ def main() -> None:
             for method in methods:
                 for seed in seeds:
                     config = _build_config(base, task, regime, matrix)
+                    config["provenance"] = {
+                        "matrix_name": str(matrix["name"]),
+                        "matrix_sha256": matrix_sha256,
+                        "task": task_name,
+                        "regime": regime_name,
+                        "base_config": str(task["base_config"]),
+                    }
                     spec_key = (task_name, regime_name, method)
                     if spec_key not in validated_specs:
                         _validate_generated_config(config, method)
@@ -76,11 +85,18 @@ def main() -> None:
                         / method
                     )
                     result_path = output_dir / f"{method}_seed{seed}" / "result.json"
-                    if result_path.exists() and not args.force:
-                        print(f"skip completed {task_name}/{regime_name}/{method}/seed{seed}")
-                        continue
-
                     config["output_dir"] = str(output_dir)
+                    if result_path.exists() and not args.force:
+                        if _completed_result_matches(
+                            result_path,
+                            config=config,
+                            method=method,
+                            seed=seed,
+                            matrix=matrix,
+                        ):
+                            print(f"skip completed {task_name}/{regime_name}/{method}/seed{seed}")
+                            continue
+                        print(f"rerun stale result {task_name}/{regime_name}/{method}/seed{seed}")
                     command = [
                         sys.executable,
                         str(RUNNER),
@@ -165,6 +181,47 @@ def _validate_generated_config(config: dict[str, Any], method: str) -> None:
         spec.loader.exec_module(module)
         _RUNNER_MODULE = module
     _RUNNER_MODULE._validate_config(config, method)
+
+
+def _matrix_fingerprint(matrix: dict[str, Any]) -> str:
+    payload = json.dumps(
+        matrix,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _completed_result_matches(
+    path: Path,
+    *,
+    config: dict[str, Any],
+    method: str,
+    seed: int,
+    matrix: dict[str, Any],
+) -> bool:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    required_schema = int(matrix.get("required_schema_version", 3))
+    provenance = payload.get("provenance", {})
+    return (
+        int(payload.get("schema_version", 0)) >= required_schema
+        and payload.get("method") == method
+        and int(payload.get("seed", -1)) == seed
+        and provenance.get("matrix_sha256")
+        == config.get("provenance", {}).get("matrix_sha256")
+        and payload.get("config_fingerprint") == _runner_config_fingerprint(config)
+    )
+
+
+def _runner_config_fingerprint(config: dict[str, Any]) -> str:
+    global _RUNNER_MODULE
+    if _RUNNER_MODULE is None:
+        _validate_generated_config(config, "raw")
+    return str(_RUNNER_MODULE._config_fingerprint(config))
 
 
 if __name__ == "__main__":

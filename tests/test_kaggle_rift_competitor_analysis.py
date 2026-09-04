@@ -58,6 +58,8 @@ def test_kaggle_rift_report_groups_task_regime_and_harm(tmp_path: Path) -> None:
     assert summary[summary["method"] == "rift"].iloc[0]["late_harmful_update_rate"] == 0.0
     assert paired.iloc[0]["target_late_harmful_reduction"] == 0.40
     assert "Accuracy | Loss | Harmful | Late harmful" in report
+    assert "Best Observed Run (Descriptive Only)" in report
+    assert summary[summary["method"] == "rift"].iloc[0]["best_final_accuracy"] == 0.75
 
 
 def test_kaggle_rift_analysis_rejects_seed_mismatch() -> None:
@@ -96,6 +98,12 @@ def test_kaggle_rift_week8_verdict_passes_on_hard_slice_gain() -> None:
                 "target_late_harmful_reduction": 0.08,
                 "target_late_harmful_reduction_ci95_low": 0.02,
                 "target_late_harmful_reduction_ci95_high": 0.12,
+                "target_cumulative_late_harm_reduction": 0.04,
+                "target_cumulative_late_harm_reduction_ci95_low": 0.01,
+                "target_cumulative_late_harm_reduction_ci95_high": 0.07,
+                "target_client_return_coverage": 1.0,
+                "target_min_client_returns": 1.0,
+                "target_late_event_count": 12.0,
             }
         ]
     )
@@ -142,3 +150,65 @@ def test_kaggle_rift_completeness_detects_missing_task_and_method() -> None:
     assert any("missing task/regime: qnli" in error for error in errors)
     assert any("missing method: sst2/noniid_high_staleness/freshness" in error for error in errors)
     assert any("seed set mismatch" in error for error in errors)
+
+
+def test_week8_gate_is_loaded_from_manifest() -> None:
+    matrix = {
+        "gates": {
+            "minimum_paired_seeds": 9,
+            "minimum_acceptance_rate": 0.45,
+            "hard_regimes": ["custom_hard"],
+        }
+    }
+
+    gate = MODULE.resolve_week8_gate(matrix)
+
+    assert gate["minimum_paired_seeds"] == 9
+    assert gate["minimum_acceptance_rate"] == 0.45
+    assert gate["hard_regimes"] == ["custom_hard"]
+    assert gate["nll_noninferiority_margin"] == -0.005
+
+
+def test_result_provenance_rejects_old_or_mixed_runs() -> None:
+    matrix = {
+        "name": "test-matrix",
+        "required_schema_version": 3,
+        "experiment": {"collected_returns": 92},
+    }
+    expected_sha = MODULE.matrix_fingerprint(matrix)
+    frame = pd.DataFrame(
+        [
+            {
+                "task": "sst2",
+                "regime": "hard",
+                "method": "rift",
+                "seed": 1,
+                "schema_version": 2,
+                "matrix_sha256": expected_sha,
+                "config_fingerprint": "cfg-a",
+                "git_commit": "abc",
+                "configured_collected_returns": 32,
+                "measured_event_count": 32,
+            },
+            {
+                "task": "sst2",
+                "regime": "hard",
+                "method": "rift",
+                "seed": 1,
+                "schema_version": 3,
+                "matrix_sha256": "wrong",
+                "config_fingerprint": "cfg-b",
+                "git_commit": "def",
+                "configured_collected_returns": 92,
+                "measured_event_count": 92,
+            },
+        ]
+    )
+
+    errors = MODULE.validate_result_provenance(frame, matrix)
+
+    assert any("duplicate run keys" in error for error in errors)
+    assert any("schema_version" in error for error in errors)
+    assert any("matrix fingerprint mismatch" in error for error in errors)
+    assert any("one known git commit" in error for error in errors)
+    assert any("collected_returns mismatch" in error for error in errors)

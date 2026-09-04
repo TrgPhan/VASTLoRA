@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -38,13 +39,16 @@ SKIPPED = {
     "AlignFed full": "Requires version groups, semantic transform, and fairness weighting; current runner includes only whole-update calibration control.",
     "OrthoFL full": "Requires maintaining separate global/client model progress and calibrated merge state, not a simple LoRA aggregation operator.",
 }
-WEEK8_GATE = {
+DEFAULT_WEEK8_GATE = {
     "minimum_paired_seeds": 6,
     "minimum_acceptance_rate": 0.30,
+    "minimum_client_return_coverage": 1.0,
+    "minimum_late_events": 6,
     "hard_regimes": ["noniid_high_staleness"],
     "accuracy_noninferiority_margin_pp": -0.5,
     "nll_noninferiority_margin": -0.005,
     "requires_positive_late_harm_reduction": True,
+    "requires_positive_cumulative_late_harm_reduction": True,
 }
 
 
@@ -61,14 +65,20 @@ def main() -> None:
     args = parse_args()
     frame = load_results(args.input_dir)
     matrix = json.loads(args.matrix.read_text(encoding="utf-8"))
+    gate = resolve_week8_gate(matrix)
     completeness_errors = validate_matrix_completeness(frame, matrix)
+    completeness_errors.extend(validate_result_provenance(frame, matrix))
     try:
         validate_seed_alignment(frame, target=args.target)
     except ValueError as exc:
         completeness_errors.append(str(exc))
     summary = summarize(frame)
     paired = paired_against(frame, args.target)
-    verdict = week8_verdict(paired, completeness_errors=completeness_errors)
+    verdict = week8_verdict(
+        paired,
+        gate=gate,
+        completeness_errors=completeness_errors,
+    )
     report = render_report(summary, paired, verdict, target=args.target)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -112,6 +122,91 @@ def validate_seed_alignment(
     return aligned
 
 
+def resolve_week8_gate(matrix: dict[str, Any]) -> dict[str, Any]:
+    gate = dict(DEFAULT_WEEK8_GATE)
+    gate.update(matrix.get("gates", {}))
+    gate["hard_regimes"] = [str(value) for value in gate["hard_regimes"]]
+    return gate
+
+
+def matrix_fingerprint(matrix: dict[str, Any]) -> str:
+    payload = json.dumps(
+        matrix,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def validate_result_provenance(
+    frame: pd.DataFrame,
+    matrix: dict[str, Any],
+) -> list[str]:
+    errors: list[str] = []
+    key_columns = ["task", "regime", "method", "seed"]
+    duplicates = frame[frame.duplicated(key_columns, keep=False)]
+    if not duplicates.empty:
+        duplicate_keys = duplicates[key_columns].drop_duplicates().to_dict("records")
+        errors.append(f"duplicate run keys: {duplicate_keys}")
+
+    required_schema = int(matrix.get("required_schema_version", 3))
+    old_schema = frame[frame["schema_version"] < required_schema]
+    if not old_schema.empty:
+        errors.append(
+            f"schema_version must be >= {required_schema}; "
+            f"found={sorted(old_schema['schema_version'].unique().tolist())}"
+        )
+
+    expected_matrix_sha = matrix_fingerprint(matrix)
+    if bool(frame["matrix_sha256"].isna().any()):
+        errors.append("one or more runs are missing matrix_sha256")
+    actual_matrix_shas = set(frame["matrix_sha256"].dropna().astype(str))
+    if actual_matrix_shas != {expected_matrix_sha}:
+        errors.append(
+            "matrix fingerprint mismatch: "
+            f"expected={expected_matrix_sha}, actual={sorted(actual_matrix_shas)}"
+        )
+
+    missing_config_hash = frame["config_fingerprint"].isna() | (
+        frame["config_fingerprint"].astype(str).str.len() == 0
+    )
+    if bool(missing_config_hash.any()):
+        errors.append("one or more runs are missing config_fingerprint")
+
+    commits = set(frame["git_commit"].dropna().astype(str))
+    if bool(frame["git_commit"].isna().any()) or len(commits) != 1 or "unknown" in commits:
+        errors.append(f"runs must share one known git commit; actual={sorted(commits)}")
+
+    for (task, regime), group in frame.groupby(["task", "regime"]):
+        hashes = set(group["config_fingerprint"].dropna().astype(str))
+        if len(hashes) != 1:
+            errors.append(
+                f"config fingerprint mismatch within {task}/{regime}: "
+                f"actual={sorted(hashes)}"
+            )
+
+    expected_returns = int(matrix.get("experiment", {}).get("collected_returns", 0))
+    if expected_returns:
+        if bool(frame["configured_collected_returns"].isna().any()):
+            errors.append("one or more runs are missing configured_collected_returns")
+        actual_returns = set(frame["configured_collected_returns"].dropna().astype(int))
+        if actual_returns != {expected_returns}:
+            errors.append(
+                "collected_returns mismatch: "
+                f"expected={expected_returns}, actual={sorted(actual_returns)}"
+            )
+        if bool(frame["measured_event_count"].isna().any()):
+            errors.append("one or more runs are missing measured_event_count")
+        measured_counts = set(frame["measured_event_count"].dropna().astype(int))
+        if measured_counts != {expected_returns}:
+            errors.append(
+                "measured event count mismatch: "
+                f"expected={expected_returns}, actual={sorted(measured_counts)}"
+            )
+    return errors
+
+
 def validate_matrix_completeness(
     frame: pd.DataFrame,
     matrix: dict[str, Any],
@@ -150,8 +245,13 @@ def load_results(input_dir: Path) -> pd.DataFrame:
     for path in sorted(input_dir.rglob("*_seed*/result.json")):
         payload = json.loads(path.read_text(encoding="utf-8"))
         metrics = payload["metrics"]
+        config = payload.get("config", {})
+        experiment = config.get("experiment", {})
+        provenance = payload.get("provenance", config.get("provenance", {}))
         records.append(
             {
+                "source_path": str(path),
+                "schema_version": int(payload.get("schema_version", 0)),
                 "method": payload["method"],
                 "variant": payload.get("variant", payload["method"]),
                 "seed": int(payload["seed"]),
@@ -159,6 +259,9 @@ def load_results(input_dir: Path) -> pd.DataFrame:
                 "task": payload.get("task", payload.get("config", {}).get("dataset", {}).get("subset", "unknown")),
                 "regime": payload.get("regime", payload.get("config", {}).get("experiment", {}).get("regime_name", "default")),
                 "git_commit": payload["git_commit"],
+                "matrix_sha256": provenance.get("matrix_sha256"),
+                "config_fingerprint": payload.get("config_fingerprint"),
+                "configured_collected_returns": experiment.get("collected_returns"),
                 **metrics,
                 # Schema v2 supplies label NLL explicitly.  Fall back to the
                 # old total NLL so historical pilot outputs remain readable.
@@ -175,6 +278,8 @@ def load_results(input_dir: Path) -> pd.DataFrame:
 def summarize(frame: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for (task, regime, method), group in frame.groupby(["task", "regime", "method"]):
+        best_accuracy_index = group["final_accuracy"].astype(float).idxmax()
+        best_nll_index = group["classification_nll"].astype(float).idxmin()
         rows.append(
             {
                 "task": task,
@@ -186,15 +291,25 @@ def summarize(frame: pd.DataFrame) -> pd.DataFrame:
                 "final_accuracy_std": float(group["final_accuracy"].std(ddof=1))
                 if len(group) > 1
                 else 0.0,
+                "best_final_accuracy": float(group.loc[best_accuracy_index, "final_accuracy"]),
+                "best_final_accuracy_seed": int(group.loc[best_accuracy_index, "seed"]),
                 # Classification comparisons use label NLL.  Sequence NLL
                 # includes EOS and is retained as a diagnostic only.
                 "final_nll_mean": float(group["classification_nll"].mean()),
                 "sequence_nll_mean": float(group["final_nll"].mean()),
+                "best_final_nll": float(group.loc[best_nll_index, "classification_nll"]),
+                "best_final_nll_seed": int(group.loc[best_nll_index, "seed"]),
+                "final_balanced_accuracy_mean": float(
+                    group.get("final_balanced_accuracy", group["final_accuracy"]).mean()
+                ),
                 "final_binary_nll_mean": float(group["final_binary_nll"].mean()),
                 "final_brier_mean": float(group["final_brier"].mean()),
                 "harmful_update_rate": float(group.get("harmful_update_rate", pd.Series([0.0])).mean()),
                 "late_harmful_update_rate": float(
                     group.get("late_harmful_update_rate", pd.Series([0.0])).mean()
+                ),
+                "extreme_harmful_update_rate": float(
+                    group.get("extreme_harmful_update_rate", pd.Series([0.0])).mean()
                 ),
                 "monitor_loss_change": float(
                     group.get("monitor_loss_change", pd.Series([0.0])).mean()
@@ -205,8 +320,26 @@ def summarize(frame: pd.DataFrame) -> pd.DataFrame:
                 "late_event_count_mean": float(
                     group.get("late_event_count", pd.Series([float("nan")])).mean()
                 ),
+                "extreme_event_count_mean": float(
+                    group.get("extreme_event_count", pd.Series([float("nan")])).mean()
+                ),
+                "client_return_coverage_mean": float(
+                    group.get("client_return_coverage", pd.Series([float("nan")])).mean()
+                ),
+                "min_client_returns_min": float(
+                    group.get("min_client_returns", pd.Series([float("nan")])).min()
+                ),
                 "cumulative_late_harm_mean": float(
                     group.get("cumulative_late_harm", pd.Series([float("nan")])).mean()
+                ),
+                "normalized_cumulative_late_harm_mean": float(
+                    group.get(
+                        "normalized_cumulative_late_harm",
+                        pd.Series([float("nan")]),
+                    ).mean()
+                ),
+                "cumulative_extreme_harm_mean": float(
+                    group.get("cumulative_extreme_harm", pd.Series([float("nan")])).mean()
                 ),
                 "worst_step_loss_increase_mean": float(
                     group.get("worst_step_loss_increase", pd.Series([float("nan")])).mean()
@@ -215,6 +348,25 @@ def summarize(frame: pd.DataFrame) -> pd.DataFrame:
                     group.get(
                         "utility_per_accepted_update", pd.Series([float("nan")])
                     ).mean()
+                ),
+                "utility_per_returned_update_mean": float(
+                    group.get(
+                        "utility_per_returned_update", pd.Series([float("nan")])
+                    ).mean()
+                ),
+                "rank_filtered_route_rate_mean": float(
+                    group.get("rank_filtered_route_rate", pd.Series([float("nan")])).mean()
+                ),
+                "freshness_fallback_route_rate_mean": float(
+                    group.get(
+                        "freshness_fallback_route_rate", pd.Series([float("nan")])
+                    ).mean()
+                ),
+                "rejection_rate_mean": float(
+                    group.get("rejection_rate", pd.Series([float("nan")])).mean()
+                ),
+                "mean_retained_fraction": float(
+                    group.get("mean_retained_fraction", pd.Series([float("nan")])).mean()
                 ),
                 "runtime_seconds_mean": float(group["runtime_seconds"].mean()),
                 "peak_cuda_memory_gib_mean": float(group["peak_cuda_memory_gib"].mean()),
@@ -269,11 +421,46 @@ def paired_against(frame: pd.DataFrame, target: str) -> pd.DataFrame:
             if "late_harmful_update_rate_candidate" in joined
             else pd.Series([0.0])
         )
+        balanced_accuracy_delta = 100.0 * (
+            joined.get("final_balanced_accuracy_target", joined["final_accuracy_target"])
+            - joined.get(
+                "final_balanced_accuracy_candidate",
+                joined["final_accuracy_candidate"],
+            )
+        )
+        cumulative_late_harm_delta = (
+            joined.get("cumulative_late_harm_candidate", pd.Series(0.0, index=joined.index))
+            - joined.get("cumulative_late_harm_target", pd.Series(0.0, index=joined.index))
+        )
+        normalized_late_harm_delta = (
+            joined.get(
+                "normalized_cumulative_late_harm_candidate",
+                pd.Series(0.0, index=joined.index),
+            )
+            - joined.get(
+                "normalized_cumulative_late_harm_target",
+                pd.Series(0.0, index=joined.index),
+            )
+        )
+        worst_step_delta = (
+            joined.get("worst_step_loss_increase_candidate", pd.Series(0.0, index=joined.index))
+            - joined.get("worst_step_loss_increase_target", pd.Series(0.0, index=joined.index))
+        )
         acc_mean, acc_low, acc_high = mean_ci95(accuracy_delta)
+        balanced_mean, balanced_low, balanced_high = mean_ci95(
+            balanced_accuracy_delta
+        )
         nll_mean, nll_low, nll_high = mean_ci95(nll_delta)
         binary_mean, binary_low, binary_high = mean_ci95(binary_nll_delta)
         harmful_mean, harmful_low, harmful_high = mean_ci95(harmful_delta)
         late_mean, late_low, late_high = mean_ci95(late_harmful_delta)
+        cumulative_mean, cumulative_low, cumulative_high = mean_ci95(
+            cumulative_late_harm_delta
+        )
+        normalized_mean, normalized_low, normalized_high = mean_ci95(
+            normalized_late_harm_delta
+        )
+        worst_mean, worst_low, worst_high = mean_ci95(worst_step_delta)
         target_acceptance_rate = (
             float(joined["acceptance_rate_target"].mean())
             if "acceptance_rate_target" in joined
@@ -294,6 +481,9 @@ def paired_against(frame: pd.DataFrame, target: str) -> pd.DataFrame:
                         > joined["final_accuracy_candidate"]
                     ).sum()
                 ),
+                "target_balanced_accuracy_gain_pp": balanced_mean,
+                "target_balanced_accuracy_gain_ci95_low": balanced_low,
+                "target_balanced_accuracy_gain_ci95_high": balanced_high,
                 "target_nll_reduction": nll_mean,
                 "target_nll_reduction_ci95_low": nll_low,
                 "target_nll_reduction_ci95_high": nll_high,
@@ -312,7 +502,31 @@ def paired_against(frame: pd.DataFrame, target: str) -> pd.DataFrame:
                 "target_late_harmful_reduction": late_mean,
                 "target_late_harmful_reduction_ci95_low": late_low,
                 "target_late_harmful_reduction_ci95_high": late_high,
+                "target_cumulative_late_harm_reduction": cumulative_mean,
+                "target_cumulative_late_harm_reduction_ci95_low": cumulative_low,
+                "target_cumulative_late_harm_reduction_ci95_high": cumulative_high,
+                "target_normalized_late_harm_reduction": normalized_mean,
+                "target_normalized_late_harm_reduction_ci95_low": normalized_low,
+                "target_normalized_late_harm_reduction_ci95_high": normalized_high,
+                "target_worst_step_harm_reduction": worst_mean,
+                "target_worst_step_harm_reduction_ci95_low": worst_low,
+                "target_worst_step_harm_reduction_ci95_high": worst_high,
                 "target_acceptance_rate": target_acceptance_rate,
+                "target_client_return_coverage": (
+                    float(joined["client_return_coverage_target"].mean())
+                    if "client_return_coverage_target" in joined
+                    else float("nan")
+                ),
+                "target_min_client_returns": (
+                    float(joined["min_client_returns_target"].min())
+                    if "min_client_returns_target" in joined
+                    else float("nan")
+                ),
+                "target_late_event_count": (
+                    float(joined["late_event_count_target"].mean())
+                    if "late_event_count_target" in joined
+                    else float("nan")
+                ),
                 "target_cumulative_late_harm": (
                     float(joined["cumulative_late_harm_target"].mean())
                     if "cumulative_late_harm_target" in joined
@@ -334,40 +548,60 @@ def paired_against(frame: pd.DataFrame, target: str) -> pd.DataFrame:
 def week8_verdict(
     paired: pd.DataFrame,
     *,
+    gate: dict[str, Any] | None = None,
     completeness_errors: list[str] | None = None,
 ) -> dict[str, Any]:
+    gate = dict(DEFAULT_WEEK8_GATE if gate is None else gate)
     completeness_errors = list(completeness_errors or [])
-    hard = paired[paired["regime"].isin(WEEK8_GATE["hard_regimes"])].copy()
+    hard = paired[paired["regime"].isin(gate["hard_regimes"])].copy()
     checks: list[dict[str, Any]] = []
     if hard.empty:
         return {
             "status": "INCONCLUSIVE",
             "reason": "No hard-slice paired rows are available.",
-            "gate": WEEK8_GATE,
+            "gate": gate,
             "hard_slice_checks": checks,
             "completeness_errors": completeness_errors,
         }
 
     for _, row in hard.iterrows():
-        seed_ok = int(row["paired_seeds"]) >= WEEK8_GATE["minimum_paired_seeds"]
+        seed_ok = int(row["paired_seeds"]) >= int(gate["minimum_paired_seeds"])
         accuracy_ok = (
             float(row["target_accuracy_gain_ci95_low"])
-            >= WEEK8_GATE["accuracy_noninferiority_margin_pp"]
+            >= float(gate["accuracy_noninferiority_margin_pp"])
         )
         nll_ok = (
             float(row["target_nll_reduction_ci95_low"])
-            >= WEEK8_GATE["nll_noninferiority_margin"]
+            >= float(gate["nll_noninferiority_margin"])
         )
         acceptance_rate = float(row.get("target_acceptance_rate", float("nan")))
         acceptance_observed = math.isfinite(acceptance_rate)
         acceptance_ok = (
             acceptance_observed
-            and acceptance_rate >= WEEK8_GATE["minimum_acceptance_rate"]
+            and acceptance_rate >= float(gate["minimum_acceptance_rate"])
+        )
+        client_coverage = float(
+            row.get("target_client_return_coverage", float("nan"))
+        )
+        client_coverage_ok = math.isfinite(client_coverage) and client_coverage >= float(
+            gate.get("minimum_client_return_coverage", 1.0)
+        )
+        late_event_count = float(row.get("target_late_event_count", float("nan")))
+        late_events_ok = math.isfinite(late_event_count) and late_event_count >= int(
+            gate.get("minimum_late_events", 1)
         )
         late_harm_ok = float(row["target_late_harmful_reduction"]) > 0.0
-        if WEEK8_GATE["requires_positive_late_harm_reduction"]:
+        if gate["requires_positive_late_harm_reduction"]:
             late_harm_ok = late_harm_ok and float(
                 row["target_late_harmful_reduction_ci95_low"]
+            ) >= 0.0
+        cumulative_harm_ok = True
+        if gate.get("requires_positive_cumulative_late_harm_reduction", False):
+            cumulative_harm_ok = float(
+                row.get("target_cumulative_late_harm_reduction", 0.0)
+            ) > 0.0
+            cumulative_harm_ok = cumulative_harm_ok and float(
+                row.get("target_cumulative_late_harm_reduction_ci95_low", 0.0)
             ) >= 0.0
         checks.append(
             {
@@ -380,12 +614,18 @@ def week8_verdict(
                 "nll_noninferior": nll_ok,
                 "acceptance_observed": acceptance_observed,
                 "acceptance_noncollapse": acceptance_ok,
+                "client_coverage_ok": client_coverage_ok,
+                "late_event_count_ok": late_events_ok,
                 "late_harm_improved": late_harm_ok,
+                "cumulative_late_harm_improved": cumulative_harm_ok,
                 "pass": seed_ok
                 and accuracy_ok
                 and nll_ok
                 and acceptance_ok
-                and late_harm_ok,
+                and client_coverage_ok
+                and late_events_ok
+                and late_harm_ok
+                and cumulative_harm_ok,
             }
         )
 
@@ -408,13 +648,19 @@ def week8_verdict(
     elif any(not check["acceptance_noncollapse"] for check in checks):
         status = "NO_GO"
         reason = "RIFT fails the minimum acceptance-rate gate."
+    elif any(not check["client_coverage_ok"] for check in checks):
+        status = "INCONCLUSIVE"
+        reason = "Measured client-return coverage is incomplete."
+    elif any(not check["late_event_count_ok"] for check in checks):
+        status = "INCONCLUSIVE"
+        reason = "Too few late events are available for the hard-slice claim."
     else:
         status = "INCONCLUSIVE"
         reason = "Hard-slice safety improvement or seed count is not yet strong enough."
     return {
         "status": status,
         "reason": reason,
-        "gate": WEEK8_GATE,
+        "gate": gate,
         "hard_slice_checks": checks,
         "completeness_errors": completeness_errors,
     }
@@ -474,9 +720,28 @@ def render_report(
     lines.extend(
         [
             "",
+            "## Best Observed Run (Descriptive Only)",
+            "",
+            "Best values may come from different seeds and are not used by the GO gate.",
+            "",
+            "| Task | Regime | Method | Best accuracy | Seed | Best label NLL | Seed |",
+            "|---|---|---|---:|---:|---:|---:|",
+        ]
+    )
+    for _, row in summary.iterrows():
+        lines.append(
+            f"| {row['task']} | {row['regime']} | {row['method']} | "
+            f"{100 * row['best_final_accuracy']:.3f}% | "
+            f"{int(row['best_final_accuracy_seed'])} | "
+            f"{row['best_final_nll']:.6f} | "
+            f"{int(row['best_final_nll_seed'])} |"
+        )
+    lines.extend(
+        [
+            "",
             f"## Paired Gains For `{target}`",
             "",
-            "| Task | Regime | Opponent | Paired seeds | Acc gain | Acc wins | Loss reduction | Loss wins | Harmful reduction | Late harmful reduction |",
+            "| Task | Regime | Opponent | Paired seeds | Acc gain | Acc wins | Loss reduction | Loss wins | Late harmful reduction | Cumulative late-harm reduction |",
             "|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
@@ -492,20 +757,20 @@ def render_report(
             f"[{row['target_nll_reduction_ci95_low']:+.6f}, "
             f"{row['target_nll_reduction_ci95_high']:+.6f}] | "
             f"{int(row['target_nll_wins'])}/{int(row['paired_seeds'])} | "
-            f"{100 * row['target_harmful_reduction']:+.2f} pp "
-            f"[{100 * row['target_harmful_reduction_ci95_low']:+.2f}, "
-            f"{100 * row['target_harmful_reduction_ci95_high']:+.2f}] | "
             f"{100 * row['target_late_harmful_reduction']:+.2f} pp "
             f"[{100 * row['target_late_harmful_reduction_ci95_low']:+.2f}, "
-            f"{100 * row['target_late_harmful_reduction_ci95_high']:+.2f}] |"
+            f"{100 * row['target_late_harmful_reduction_ci95_high']:+.2f}] | "
+            f"{row['target_cumulative_late_harm_reduction']:+.6f} "
+            f"[{row['target_cumulative_late_harm_reduction_ci95_low']:+.6f}, "
+            f"{row['target_cumulative_late_harm_reduction_ci95_high']:+.6f}] |"
         )
     lines.extend(
         [
             "",
             "## Week 8 Hard-Slice Gate",
             "",
-            "| Task | Regime | Opponent | Seeds | Accuracy NI | Loss NI | Acceptance | Late harm improved | Pass |",
-            "|---|---|---|---:|---|---|---|---|---|",
+            "| Task | Regime | Opponent | Seeds | Accuracy NI | Loss NI | Acceptance | Coverage | Late N | Late rate | Cumulative harm | Pass |",
+            "|---|---|---|---:|---|---|---|---|---|---|---|---|",
         ]
     )
     for check in verdict["hard_slice_checks"]:
@@ -515,7 +780,10 @@ def render_report(
             f"{check['accuracy_noninferior']} | "
             f"{check['nll_noninferior']} | "
             f"{check['acceptance_noncollapse']} | "
+            f"{check['client_coverage_ok']} | "
+            f"{check['late_event_count_ok']} | "
             f"{check['late_harm_improved']} | "
+            f"{check['cumulative_late_harm_improved']} | "
             f"{check['pass']} |"
         )
     lines.extend(

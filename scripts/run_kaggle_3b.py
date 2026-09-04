@@ -4,6 +4,7 @@ import argparse
 import copy
 from collections import deque
 from collections.abc import Mapping, Sequence
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -190,6 +191,18 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         experiment=experiment,
         seed=seed,
     )
+    train_labels = [int(value) for value in train[label_column]]
+    partition_diagnostics = {
+        str(client_id): {
+            "num_examples": len(indices),
+            "label_histogram": _label_histogram(
+                [train_labels[index] for index in indices]
+            ),
+            "rank": int(experiment["client_ranks"][client_id]),
+            "compute_time": float(experiment["compute_times"][client_id]),
+        }
+        for client_id, indices in enumerate(partitions)
+    }
     clients = _build_clients(experiment, partitions)
     total_returns = experiment["warmup_returns"] + experiment["collected_returns"]
     trace = AsyncEventSimulator(
@@ -361,19 +374,27 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                     ),
                     keep_nonpositive=False,
                 )
-                retained_ranks.append(scores.retained_rank)
+                selected_rank = sum(update.rank for update in filtered.values())
+                retained_ranks.append(selected_rank)
                 total_ranks.append(scores.total_rank)
                 predicted_gains.append(scores.predicted_gain)
                 if accepted_method == "spectral_filter":
-                    next_state = _aggregate_scaled_updates(
-                        current_state,
-                        filtered,
-                        scale=float(experiment.get("spectral_filter_scale", 1.0)),
-                        experiment=experiment,
-                    )
-                    accepted_updates = filtered
-                    accepted_scales.append(float(experiment.get("spectral_filter_scale", 1.0)))
-                    accepted_routes.append("gradient_filter_no_gate")
+                    if selected_rank:
+                        scale = float(experiment.get("spectral_filter_scale", 1.0))
+                        next_state = _aggregate_scaled_updates(
+                            current_state,
+                            filtered,
+                            scale=scale,
+                            experiment=experiment,
+                        )
+                        accepted_updates = filtered
+                        accepted_scales.append(scale)
+                        accepted_routes.append("gradient_filter_no_gate")
+                    else:
+                        next_state = dict(current_state)
+                        accepted_updates = filtered
+                        accepted_scales.append(0.0)
+                        accepted_routes.append("reject")
                 else:
                     next_state, accepted_updates, scale, mean_delta, route = (
                         _rift_gate_state(
@@ -493,6 +514,13 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                     and math.isfinite(accepted_monitor_loss)
                     else False
                 ),
+                "extreme_harmful_update": (
+                    event.staleness >= int(experiment.get("extreme_tau", 16))
+                    and accepted_monitor_loss > current_monitor_loss + 1e-12
+                    if math.isfinite(current_monitor_loss)
+                    and math.isfinite(accepted_monitor_loss)
+                    else False
+                ),
                 "freshness": _mean(freshness_values),
                 "rho": _mean(rhos),
                 "residual_scale": _mean(residual_scales),
@@ -537,15 +565,55 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         and math.isfinite(row["current_loss"])
         and math.isfinite(row["accepted_loss"])
     ]
+    late_tau = int(experiment.get("late_tau", 8))
+    extreme_tau = int(experiment.get("extreme_tau", max(16, late_tau + 1)))
     late_deltas = [
         row["accepted_loss"] - row["current_loss"]
         for row in measured_rows
-        if row["staleness"] >= int(experiment.get("late_tau", 8))
+        if row["staleness"] >= late_tau
+    ]
+    extreme_deltas = [
+        row["accepted_loss"] - row["current_loss"]
+        for row in measured_rows
+        if row["staleness"] >= extreme_tau
     ]
     accepted_rows = [row for row in measured_rows if row["update_accepted"]]
     accepted_utilities = [
         row["current_loss"] - row["accepted_loss"] for row in accepted_rows
     ]
+    returned_utilities = [
+        row["current_loss"] - row["accepted_loss"] for row in measured_rows
+    ]
+    num_clients = int(experiment["num_clients"])
+    measured_return_counts = {
+        str(client_id): sum(int(row["client_id"]) == client_id for row in measured_rows)
+        for client_id in range(num_clients)
+    }
+    measured_accept_counts = {
+        str(client_id): sum(
+            int(row["client_id"]) == client_id and bool(row["update_accepted"])
+            for row in measured_rows
+        )
+        for client_id in range(num_clients)
+    }
+    staleness_values = [int(row["staleness"]) for row in measured_rows]
+    route_values = [str(row["route"]) for row in measured_rows]
+    retained_values = [
+        float(row["retained_fraction"])
+        for row in measured_rows
+        if math.isfinite(float(row["retained_fraction"]))
+    ]
+    predicted_values = [
+        float(row["predicted_gain"])
+        for row in measured_rows
+        if math.isfinite(float(row["predicted_gain"]))
+    ]
+    accepted_losses = [float(row["accepted_loss"]) for row in measured_rows]
+    best_monitor_offset = (
+        min(range(len(accepted_losses)), key=accepted_losses.__getitem__)
+        if accepted_losses
+        else None
+    )
     metrics = {
         "baseline_accuracy": baseline["accuracy"],
         "baseline_balanced_accuracy": baseline["balanced_accuracy"],
@@ -563,11 +631,14 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         "final_eos_nll": final["eos_nll"],
         "accuracy_change_pp": 100.0 * (final["accuracy"] - baseline["accuracy"]),
         "nll_change": final["nll"] - baseline["nll"],
+        "label_nll_change": final["label_nll"] - baseline["label_nll"],
         "binary_nll_change": _optional_difference(
             final["binary_nll"], baseline["binary_nll"]
         ),
         "mean_local_loss": _mean([row["local_loss"] for row in event_rows]),
-        "mean_staleness": _mean([row["staleness"] for row in event_rows]),
+        "mean_staleness": _mean(staleness_values),
+        "max_staleness": max(staleness_values, default=0),
+        "p90_staleness": _nearest_rank_percentile(staleness_values, 0.90),
         "harmful_update_rate": _mean(
             [row["harmful_update"] for row in event_rows if row["measured"]]
         ),
@@ -575,7 +646,14 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
             [
                 row["late_harmful_update"]
                 for row in event_rows
-                if row["measured"] and row["staleness"] >= int(experiment.get("late_tau", 8))
+                if row["measured"] and row["staleness"] >= late_tau
+            ]
+        ),
+        "extreme_harmful_update_rate": _mean(
+            [
+                row["extreme_harmful_update"]
+                for row in event_rows
+                if row["measured"] and row["staleness"] >= extreme_tau
             ]
         ),
         "monitor_loss_change": _mean(
@@ -590,18 +668,52 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         "acceptance_rate": _mean([row["update_accepted"] for row in measured_rows]),
         "client_return_coverage": _mean(
             [
-                any(int(row["client_id"]) == client_id for row in event_rows)
-                for client_id in range(int(experiment["num_clients"]))
+                measured_return_counts[str(client_id)] > 0
+                for client_id in range(num_clients)
             ]
         ),
         "min_client_returns": min(
-            sum(int(row["client_id"]) == client_id for row in event_rows)
-            for client_id in range(int(experiment["num_clients"]))
+            measured_return_counts.values(), default=0
         ),
+        "measured_event_count": len(measured_rows),
+        "measured_return_counts": measured_return_counts,
+        "measured_accept_counts": measured_accept_counts,
         "late_event_count": len(late_deltas),
         "cumulative_late_harm": sum(max(delta, 0.0) for delta in late_deltas),
+        "normalized_cumulative_late_harm": _mean(
+            [max(delta, 0.0) for delta in late_deltas]
+        ),
         "worst_step_loss_increase": max(late_deltas, default=0.0),
+        "extreme_event_count": len(extreme_deltas),
+        "cumulative_extreme_harm": sum(
+            max(delta, 0.0) for delta in extreme_deltas
+        ),
+        "normalized_cumulative_extreme_harm": _mean(
+            [max(delta, 0.0) for delta in extreme_deltas]
+        ),
+        "worst_extreme_loss_increase": max(extreme_deltas, default=0.0),
         "utility_per_accepted_update": _mean(accepted_utilities),
+        "utility_per_returned_update": _mean(returned_utilities),
+        "cumulative_monitor_utility": sum(returned_utilities),
+        "rank_filtered_route_rate": _mean(
+            [route == "rank_filtered" for route in route_values]
+        ),
+        "freshness_fallback_route_rate": _mean(
+            [route == "freshness_fallback" for route in route_values]
+        ),
+        "rejection_rate": _mean([route == "reject" for route in route_values]),
+        "mean_retained_fraction": _mean(retained_values),
+        "mean_predicted_gain": _mean(predicted_values),
+        "best_monitor_label_nll": (
+            accepted_losses[best_monitor_offset]
+            if best_monitor_offset is not None
+            else float("nan")
+        ),
+        "best_monitor_event": (
+            int(measured_rows[best_monitor_offset]["event"])
+            if best_monitor_offset is not None
+            else None
+        ),
         "mean_rho_after_warmup": _mean(
             [row["rho"] for row in event_rows[experiment["warmup_returns"] :]]
         ),
@@ -615,7 +727,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         "peak_cuda_memory_gib": peak_memory,
     }
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "method": method,
         "seed": seed,
         "model": config["model"]["name"],
@@ -624,7 +736,19 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         ),
         "regime": experiment.get("regime_name", "default"),
         "git_commit": _git_commit(),
+        "config_fingerprint": _config_fingerprint(config),
+        "provenance": dict(config.get("provenance", {})),
         "config": config,
+        "data_diagnostics": {
+            "calibration_gradient_labels": _dataset_label_histogram(
+                calibration_gradient, label_column
+            ),
+            "calibration_gate_labels": _dataset_label_histogram(
+                calibration_gate, label_column
+            ),
+            "monitor_labels": _dataset_label_histogram(monitor, label_column),
+            "federated_client_partitions": partition_diagnostics,
+        },
         "metrics": metrics,
         "events": event_rows,
         "baseline_eval_details": baseline_details,
@@ -887,15 +1011,18 @@ def _make_classification_batch(
         raise ValueError("calibration dataset must be non-empty")
     label_column = dataset_config["label_column"]
     examples = [(item, int(item[label_column])) for item in dataset]
-    return _move_batch(
-        _collate_examples(
-            tokenizer,
-            examples,
-            dataset_config=dataset_config,
-            max_length=max_length,
-        ),
-        _model_input_device(model),
+    batch = _collate_examples(
+        tokenizer,
+        examples,
+        dataset_config=dataset_config,
+        max_length=max_length,
     )
+    if tokenizer.eos_token_id is not None:
+        batch["labels"] = batch["labels"].masked_fill(
+            batch["labels"].eq(tokenizer.eos_token_id),
+            -100,
+        )
+    return _move_batch(batch, _model_input_device(model))
 
 
 def _per_example_classification_losses(
@@ -1322,6 +1449,42 @@ def _optional_difference(
     return left - right
 
 
+def _nearest_rank_percentile(values: Sequence[int | float], quantile: float) -> float:
+    if not values:
+        return 0.0
+    if not 0.0 <= quantile <= 1.0:
+        raise ValueError("quantile must be in [0, 1]")
+    ordered = sorted(float(value) for value in values)
+    index = max(0, math.ceil(quantile * len(ordered)) - 1)
+    return ordered[index]
+
+
+def _label_histogram(labels: Sequence[int | str]) -> dict[str, int]:
+    histogram: dict[str, int] = {}
+    for label in labels:
+        key = str(label)
+        histogram[key] = histogram.get(key, 0) + 1
+    return dict(sorted(histogram.items()))
+
+
+def _dataset_label_histogram(dataset, label_column: str) -> dict[str, int]:
+    if dataset is None:
+        return {}
+    return _label_histogram(list(dataset[label_column]))
+
+
+def _config_fingerprint(config: Mapping[str, Any]) -> str:
+    canonical = copy.deepcopy(dict(config))
+    canonical.pop("output_dir", None)
+    payload = json.dumps(
+        canonical,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def _git_commit() -> str:
     try:
         return subprocess.check_output(
@@ -1413,6 +1576,10 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
         raise ValueError("adaptive_max_rank cannot exceed server_max_rank")
     if experiment["warmup_returns"] < 1 or experiment["collected_returns"] < 1:
         raise ValueError("warmup_returns and collected_returns must be positive")
+    if int(experiment.get("late_tau", 8)) < 0:
+        raise ValueError("late_tau must be non-negative")
+    if int(experiment.get("extreme_tau", 16)) <= int(experiment.get("late_tau", 8)):
+        raise ValueError("extreme_tau must be greater than late_tau")
     if int(experiment.get("buffer_size", 1)) != 1:
         raise ValueError(
             "run_kaggle_3b currently applies one returned update at a time; "

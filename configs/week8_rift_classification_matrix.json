@@ -1,5 +1,6 @@
 {
   "name": "riftlora-week8-classification-matrix",
+  "required_schema_version": 3,
   "description": "Week 8 main classification matrix for SST-2, QNLI, and MNLI matched/mismatched under IID, IID heterogeneous, and non-IID high-staleness slices.",
   "runner": {
     "script": "scripts/run_kaggle_3b.py",
@@ -7,7 +8,8 @@
     "schedule_mode": "async"
   },
   "experiment": {
-    "collected_returns": 92
+    "collected_returns": 92,
+    "extreme_tau": 16
   },
   "tasks": [
     {
@@ -65,13 +67,13 @@
       "name": "iid_homogeneous",
       "partition_mode": "iid",
       "client_ranks": [8, 8, 8, 8, 8, 8, 8, 8, 8, 8],
-      "compute_times": [1.0, 1.0, 1.1, 1.1, 1.2, 1.2, 1.3, 1.3, 1.4, 1.4]
+      "compute_times": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
     },
     {
       "name": "iid_heterogeneous",
       "partition_mode": "iid",
       "client_ranks": [4, 8, 16, 4, 8, 16, 4, 8, 16, 8],
-      "compute_times": [1.0, 1.1, 1.2, 1.5, 1.8, 2.2, 2.8, 3.4, 4.2, 5.5]
+      "compute_times": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
     },
     {
       "name": "noniid_high_staleness",
@@ -81,22 +83,26 @@
     }
   ],
   "methods": [
-    "raw",
     "fedex",
     "freshness",
     "fedrot",
     "vast",
     "mtip_adaptive",
+    "spectral_filter",
     "alignfed_calibration",
     "rift"
   ],
   "seeds": [4101, 4102, 4103, 4104, 4105, 4106],
   "gates": {
     "minimum_paired_seeds": 6,
+    "minimum_acceptance_rate": 0.30,
+    "minimum_client_return_coverage": 1.0,
+    "minimum_late_events": 6,
     "hard_regimes": ["noniid_high_staleness"],
     "accuracy_noninferiority_margin_pp": -0.5,
     "nll_noninferiority_margin": -0.005,
-    "requires_positive_late_harm_reduction": true
+    "requires_positive_late_harm_reduction": true,
+    "requires_positive_cumulative_late_harm_reduction": true
   },
   "notes": [
     "MNLI-m/mm uses the three-way generative evaluator; confirm label calibration before treating it as a primary claim.",

@@ -7,9 +7,13 @@ Status: infrastructure ready, GPU matrix pending
 - Task chinh: SST-2, QNLI, MNLI-m va MNLI-mm.
 - Regime chinh: IID homogeneous, IID heterogeneous, non-IID high-staleness.
 - Seeds: 6 seed de co paired statistical report.
-- Metrics chinh: Accuracy, label NLL, Brier, Harmful, Late harmful, Acceptance.
+- Metrics chinh: Accuracy, label NLL, Brier, Harmful, Late harmful, cumulative
+  harm, Acceptance va measured-client coverage.
 - Sequence NLL va EOS NLL duoc ghi rieng de chan doan; evaluator classification
   chi dung label NLL, khong dung EOS de quyet dinh nhan.
+- Local training, RIFT component-scoring gradient va calibration gate cung dung
+  label-only objective; khong con truong hop filter chon component theo EOS trong
+  khi gate danh gia theo label NLL.
 
 ## Da review
 
@@ -32,11 +36,21 @@ Status: infrastructure ready, GPU matrix pending
 - SST-2, QNLI, MNLI-m va MNLI-mm matrix config.
 - Script reproducible de chay tung task/regime/method/seed, co skip run da hoan tat.
 - 4 task views x 3 regimes x 8 methods x 6 seeds = 576 runs khi chay full matrix.
+- `raw` duoc bo khoi matrix vi trung operator voi `fedex`; vi tri do duoc dung
+  cho `spectral_filter` de kiem tra filter-only mechanism cua RIFT.
+- `iid_heterogeneous` giu compute time dong nhat va chi doi client rank, tranh
+  tron rank heterogeneity voi latency heterogeneity.
 - Analyzer tao paired CI95 va hard-slice verdict `GO`/`NO_GO`/`INCONCLUSIVE`.
 - Acceptance gate: RIFT phai giu acceptance rate toi thieu 30% tren measured updates.
+- Analyzer doc gate truc tiep tu matrix manifest, reject schema/config/matrix
+  fingerprint cu, duplicate run va mixed Git commit.
 - Hard-slice schedule thu 100 returns (8 warmup + 92 measured) de moi logical
   client co co hoi xuat hien; phan bo return van co the lech theo compute time.
-- Runner log them cumulative late harm, worst-step loss increase va utility per accepted update.
+- Runner log them measured return/accept count tung client, `tau >= 16` extreme
+  tail, cumulative/normalized harm, worst-step loss, utility per returned update,
+  route rate va retained fraction.
+- Best accuracy va best label NLL duoc report kem seed nhu descriptive metrics;
+  chung khong thay mean/CI va khong duoc dung mot minh de quyet dinh GO.
 - Paired statistical report voi CI95.
 - Hard-slice verdict cho non-IID + high staleness.
 - Seed alignment guard.
@@ -69,3 +83,13 @@ python scripts/analyze_kaggle_3b_rift_competitors.py --input-dir outputs/week8_c
 ```
 
 Analyzer tu dong quet de quy cac `result.json`, sau do kiem tra paired seed trong tung task/regime.
+
+## Tuning guardrail
+
+- Tune RIFT chi tren dev seeds/task da khai bao truoc.
+- Chon mot Pareto configuration dua tren late harm, label NLL, accuracy va
+  acceptance; khong chon rieng seed co best score.
+- Dong bang config truoc khi chay cac seed 4101-4106.
+- Cac metric co the lam RIFT mat loi the bieu kien (client coverage, cumulative
+  harm, filter-only va extreme tail) van bat buoc report, vi chung phan biet
+  method thuc su tot voi reject/cherry-pick.

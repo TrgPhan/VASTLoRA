@@ -38,7 +38,9 @@ strong enough without overclaiming against incompatible paper numbers.
 Week 8 entry point for the RIFT thesis. It clones the GitHub repository,
 installs the current code, runs the tests, and launches the SST-2/QNLI/MNLI
 classification matrix with two one-GPU workers when T4x2 is available. Use
-`smoke` for a quick check, `focused` for the hard-slice comparison, and `full`
-for the complete 576-run acceptance matrix. Results and the analyzer verdict
-are packaged as a ZIP under `/kaggle/working`.
+`smoke` for a quick check, `focused` for the five-control hard-slice comparison,
+and `full` for the complete 576-run acceptance matrix. Large runs can be split
+deterministically with `SHARD_COUNT` and `SHARD_INDEX`. Results, best-observed
+descriptive scores, provenance checks, and the analyzer verdict are packaged as
+a ZIP under `/kaggle/working`.
 

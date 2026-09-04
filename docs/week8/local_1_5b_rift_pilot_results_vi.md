@@ -56,9 +56,10 @@ Paired theo seed:
   3/3; harmful thang 2, hoa 1.
 - So voi FedRot: accuracy va class NLL RIFT thang 2/3; harmful thang 3/3.
 
-FedRot co best single-run accuracy/NLL tai seed 2201, nhung dao dong lon va co
-harmful/late-harmful cao. Vi vay khong duoc cherry-pick seed 2201 de thay cho
-mean va paired result.
+FedRot co mot single run manh tai seed 2201 (91.67% accuracy, class NLL
+0.206840), nhung dao dong lon va co harmful/late-harmful cao. RIFT seed 2202
+cung dat 91.67% accuracy va class NLL thap hon (0.206346). Vi vay khong duoc
+cherry-pick seed 2201 de thay cho mean va paired result.
 
 ## Ket luan dung muc
 
@@ -72,4 +73,3 @@ returns va runner nay van immediate async (`buffer_size=1`). Can chay matrix 3B
 da dong bang tren SST-2/QNLI/MNLI va 6 confirmation seeds. Cac output local tren
 duoc tao trong luc code objective dang la uncommitted worktree, nen chi la pilot;
 official matrix bat buoc ghi clean Git provenance.
-

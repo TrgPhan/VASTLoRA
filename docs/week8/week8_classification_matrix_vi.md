@@ -68,6 +68,7 @@ Status: infrastructure ready, GPU matrix pending
 - [scripts/analyze_kaggle_3b_rift_competitors.py](../../scripts/analyze_kaggle_3b_rift_competitors.py)
 - [scripts/run_kaggle_3b.py](../../scripts/run_kaggle_3b.py)
 - [scripts/run_week8_classification_matrix.py](../../scripts/run_week8_classification_matrix.py)
+- [Local Qwen2.5-1.5B pilot results](local_1_5b_rift_pilot_results_vi.md)
 
 ## Cach chay
 

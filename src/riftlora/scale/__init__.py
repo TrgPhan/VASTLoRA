@@ -11,6 +11,7 @@ from riftlora.scale.objective import (
     ComponentScoreResult,
     filter_compact_by_scores,
     scale_compact_update,
+    score_compact_components_microbatched,
     score_compact_components_with_hooks,
 )
 from riftlora.scale.peft_bridge import (
@@ -39,6 +40,7 @@ __all__ = [
     "mask_inactive_rank_gradients",
     "named_peft_lora_modules",
     "scale_compact_update",
+    "score_compact_components_microbatched",
     "score_compact_components_with_hooks",
     "transport_compact_update",
     "zero_compact",

@@ -39,7 +39,7 @@ from riftlora.scale import (
     load_compact_adapter_state,
     mask_inactive_rank_gradients,
     scale_compact_update,
-    score_compact_components_with_hooks,
+    score_compact_components_microbatched,
     transport_compact_update,
 )
 from riftlora.scale.tradeoff import reserved_train_eval_indices
@@ -114,9 +114,9 @@ def main() -> None:
         output_dir / "final_eval_details.csv", index=False
     )
     (output_dir / "result.json").write_text(
-        json.dumps(result, indent=2, sort_keys=True), encoding="utf-8"
+        json.dumps(result, indent=2, sort_keys=True, allow_nan=False), encoding="utf-8"
     )
-    print(json.dumps(result["metrics"], indent=2, sort_keys=True))
+    print(json.dumps(result["metrics"], indent=2, sort_keys=True, allow_nan=False))
 
 
 def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[str, Any]:
@@ -213,17 +213,44 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
     ).run(max_returns=total_returns)
 
     tokenizer, model = _load_model(config)
-    gradient_batch = (
-        _make_classification_batch(
+    component_score_objective = str(
+        experiment.get("component_score_objective", "label_nll")
+    )
+    gradient_batch_size = int(
+        experiment.get(
+            "calibration_gradient_batch_size",
+            calibration_gradient_examples,
+        )
+    )
+    if calibration_gradient is None:
+        gradient_batches = None
+        component_score_loss_fn = None
+    elif component_score_objective == "class_nll":
+        gradient_batches = _make_classification_candidate_batches(
             model,
             tokenizer,
             calibration_gradient,
             dataset_config=dataset_config,
             max_length=config["model"]["max_length"],
+            batch_size=gradient_batch_size,
         )
-        if calibration_gradient is not None
-        else None
-    )
+        component_score_loss_fn = lambda target_model, batch: (
+            _classification_candidate_nll_loss(
+                target_model,
+                batch,
+                eos_token_id=tokenizer.eos_token_id,
+            )
+        )
+    else:
+        gradient_batches = _make_classification_batches(
+            model,
+            tokenizer,
+            calibration_gradient,
+            dataset_config=dataset_config,
+            max_length=config["model"]["max_length"],
+            batch_size=gradient_batch_size,
+        )
+        component_score_loss_fn = None
     server_state = _state_to_cpu(empty_adapter_state(model))
     snapshots: dict[int, dict[str, CompactSVD]] = {0: server_state}
     histories = {
@@ -359,12 +386,13 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                 total_ranks.append(sum(update.rank for update in innovations.values()))
                 predicted_gains.append(float("nan"))
             else:
-                if gradient_batch is None:
+                if gradient_batches is None:
                     raise ValueError(f"{accepted_method} requires calibration_gradient_examples")
-                scores = score_compact_components_with_hooks(
+                scores = score_compact_components_microbatched(
                     model,
                     innovations,
-                    gradient_batch,
+                    gradient_batches,
+                    loss_fn=component_score_loss_fn,
                 )
                 filtered = filter_compact_by_scores(
                     innovations,
@@ -463,6 +491,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                 dataset_config=dataset_config,
                 max_length=config["model"]["max_length"],
                 batch_size=experiment["eval_batch_size"],
+                objective=str(experiment.get("monitor_objective", "label_nll")),
             )
             load_compact_adapter_state(
                 model,
@@ -477,6 +506,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                 dataset_config=dataset_config,
                 max_length=config["model"]["max_length"],
                 batch_size=experiment["eval_batch_size"],
+                objective=str(experiment.get("monitor_objective", "label_nll")),
             )
 
         update_accepted = int(any(route != "reject" for route in accepted_routes))
@@ -620,6 +650,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         "baseline_brier": baseline["brier"],
         "baseline_nll": baseline["nll"],
         "baseline_binary_nll": baseline["binary_nll"],
+        "baseline_class_nll": baseline["class_nll"],
         "baseline_label_nll": baseline["label_nll"],
         "baseline_eos_nll": baseline["eos_nll"],
         "final_accuracy": final["accuracy"],
@@ -627,6 +658,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         "final_brier": final["brier"],
         "final_nll": final["nll"],
         "final_binary_nll": final["binary_nll"],
+        "final_class_nll": final["class_nll"],
         "final_label_nll": final["label_nll"],
         "final_eos_nll": final["eos_nll"],
         "accuracy_change_pp": 100.0 * (final["accuracy"] - baseline["accuracy"]),
@@ -635,6 +667,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         "binary_nll_change": _optional_difference(
             final["binary_nll"], baseline["binary_nll"]
         ),
+        "class_nll_change": final["class_nll"] - baseline["class_nll"],
         "mean_local_loss": _mean([row["local_loss"] for row in event_rows]),
         "mean_staleness": _mean(staleness_values),
         "max_staleness": max(staleness_values, default=0),
@@ -707,8 +740,21 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         "best_monitor_label_nll": (
             accepted_losses[best_monitor_offset]
             if best_monitor_offset is not None
-            else float("nan")
+            and str(experiment.get("monitor_objective", "label_nll")) == "label_nll"
+            else None
         ),
+        "best_monitor_class_nll": (
+            accepted_losses[best_monitor_offset]
+            if best_monitor_offset is not None
+            and str(experiment.get("monitor_objective", "label_nll")) == "class_nll"
+            else None
+        ),
+        "best_monitor_objective_loss": (
+            accepted_losses[best_monitor_offset]
+            if best_monitor_offset is not None
+            else None
+        ),
+        "monitor_objective": str(experiment.get("monitor_objective", "label_nll")),
         "best_monitor_event": (
             int(measured_rows[best_monitor_offset]["event"])
             if best_monitor_offset is not None
@@ -727,7 +773,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         "peak_cuda_memory_gib": peak_memory,
     }
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "method": method,
         "seed": seed,
         "model": config["model"]["name"],
@@ -736,6 +782,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         ),
         "regime": experiment.get("regime_name", "default"),
         "git_commit": _git_commit(),
+        "git_worktree_dirty": _git_worktree_dirty(),
         "config_fingerprint": _config_fingerprint(config),
         "provenance": dict(config.get("provenance", {})),
         "config": config,
@@ -883,7 +930,7 @@ def evaluate_classification(
     label_correct = {label: 0 for label in range(num_labels)}
     brier_scores: list[float] = []
     true_nlls: list[float] = []
-    binary_nlls: list[float] = []
+    class_nlls: list[float] = []
     true_label_nlls: list[float] = []
     true_eos_nlls: list[float] = []
     detail_rows: list[dict[str, Any]] = []
@@ -937,13 +984,9 @@ def evaluate_classification(
             label_totals[true_label] += 1
             label_correct[true_label] += int(prediction == true_label)
             true_nlls.append(float(row[true_label].item()))
-            binary_nll = (
-                float(-torch.log(probs[true_label].clamp_min(1e-12)).item())
-                if num_labels == 2
-                else None
-            )
-            if binary_nll is not None:
-                binary_nlls.append(binary_nll)
+            class_nll = float(-torch.log(probs[true_label].clamp_min(1e-12)).item())
+            class_nlls.append(class_nll)
+            binary_nll = class_nll if num_labels == 2 else None
             target = torch.zeros_like(probs)
             target[true_label] = 1.0
             brier = float(torch.sum((probs - target) ** 2).item())
@@ -967,6 +1010,7 @@ def evaluate_classification(
                 "is_correct": int(prediction == true_label),
                 "true_nll": float(row[true_label].item()),
                 "binary_nll": binary_nll,
+                "class_nll": class_nll,
                 "brier": brier,
                 "label_nll": float(label_row[true_label].item()),
                 "eos_nll": float(eos_row[true_label].item()),
@@ -993,7 +1037,8 @@ def evaluate_classification(
         "balanced_accuracy": balanced_accuracy,
         "brier": _mean(brier_scores),
         "nll": _mean(true_nlls),
-        "binary_nll": _mean(binary_nlls) if num_labels == 2 else None,
+        "class_nll": _mean(class_nlls),
+        "binary_nll": _mean(class_nlls) if num_labels == 2 else None,
         "label_nll": _mean(true_label_nlls),
         "eos_nll": _mean(true_eos_nlls),
     }, detail_rows
@@ -1007,22 +1052,150 @@ def _make_classification_batch(
     dataset_config: Mapping[str, Any],
     max_length: int,
 ):
-    if dataset is None or len(dataset) == 0:
-        raise ValueError("calibration dataset must be non-empty")
-    label_column = dataset_config["label_column"]
-    examples = [(item, int(item[label_column])) for item in dataset]
-    batch = _collate_examples(
+    return _make_classification_batches(
+        model,
         tokenizer,
-        examples,
+        dataset,
         dataset_config=dataset_config,
         max_length=max_length,
-    )
-    if tokenizer.eos_token_id is not None:
-        batch["labels"] = batch["labels"].masked_fill(
-            batch["labels"].eq(tokenizer.eos_token_id),
-            -100,
+        batch_size=len(dataset) if dataset is not None else 0,
+    )[0][0]
+
+
+def _make_classification_batches(
+    model,
+    tokenizer,
+    dataset,
+    *,
+    dataset_config: Mapping[str, Any],
+    max_length: int,
+    batch_size: int,
+) -> list[tuple[dict[str, torch.Tensor], float]]:
+    if dataset is None or len(dataset) == 0:
+        raise ValueError("calibration dataset must be non-empty")
+    if batch_size <= 0:
+        raise ValueError("calibration gradient batch size must be positive")
+    label_column = dataset_config["label_column"]
+    examples = [(item, int(item[label_column])) for item in dataset]
+    batches: list[tuple[dict[str, torch.Tensor], float]] = []
+    for start in range(0, len(examples), batch_size):
+        batch = _collate_examples(
+            tokenizer,
+            examples[start : start + batch_size],
+            dataset_config=dataset_config,
+            max_length=max_length,
         )
-    return _move_batch(batch, _model_input_device(model))
+        if tokenizer.eos_token_id is not None:
+            batch["labels"] = batch["labels"].masked_fill(
+                batch["labels"].eq(tokenizer.eos_token_id),
+                -100,
+            )
+        weight = float(batch["labels"].ne(-100).sum().item())
+        if weight <= 0.0:
+            raise ValueError("calibration batch has no supervised label tokens")
+        batches.append((_move_batch(batch, _model_input_device(model)), weight))
+    return batches
+
+
+def _make_classification_candidate_batches(
+    model,
+    tokenizer,
+    dataset,
+    *,
+    dataset_config: Mapping[str, Any],
+    max_length: int,
+    batch_size: int,
+) -> list[tuple[dict[str, torch.Tensor], float]]:
+    if dataset is None or len(dataset) == 0:
+        raise ValueError("calibration dataset must be non-empty")
+    if batch_size <= 0:
+        raise ValueError("calibration gradient batch size must be positive")
+    label_column = dataset_config["label_column"]
+    label_count = len(_label_texts(dataset_config))
+    examples = [(item, int(item[label_column])) for item in dataset]
+    batches: list[tuple[dict[str, torch.Tensor], float]] = []
+    for start in range(0, len(examples), batch_size):
+        group = examples[start : start + batch_size]
+        candidates = [
+            (item, candidate)
+            for item, _ in group
+            for candidate in range(label_count)
+        ]
+        batch = _collate_examples(
+            tokenizer,
+            candidates,
+            dataset_config=dataset_config,
+            max_length=max_length,
+        )
+        batch["class_labels"] = torch.tensor(
+            [true_label for _, true_label in group],
+            dtype=torch.long,
+        )
+        batches.append(
+            (_move_batch(batch, _model_input_device(model)), float(len(group)))
+        )
+    return batches
+
+
+def _classification_candidate_label_nlls(
+    model,
+    batch: Mapping[str, torch.Tensor],
+    *,
+    eos_token_id: int | None,
+) -> torch.Tensor:
+    logits = model(
+        input_ids=batch["input_ids"],
+        attention_mask=batch["attention_mask"],
+    ).logits
+    shifted_logits = logits[:, :-1, :].float()
+    shifted_labels = batch["labels"][:, 1:].to(logits.device)
+    token_loss = F.cross_entropy(
+        shifted_logits.transpose(1, 2),
+        shifted_labels,
+        ignore_index=-100,
+        reduction="none",
+    )
+    label_mask = shifted_labels.ne(-100)
+    if eos_token_id is not None:
+        label_mask &= shifted_labels.ne(eos_token_id)
+    candidate_nll = (
+        (token_loss * label_mask).sum(dim=1) / label_mask.sum(dim=1).clamp_min(1)
+    )
+    num_examples = int(batch["class_labels"].numel())
+    if num_examples <= 0 or candidate_nll.numel() % num_examples:
+        raise ValueError("candidate batch does not contain a complete label grid")
+    return candidate_nll.view(num_examples, -1)
+
+
+def _classification_candidate_nll_values(
+    model,
+    batch: Mapping[str, torch.Tensor],
+    *,
+    eos_token_id: int | None,
+) -> torch.Tensor:
+    candidate_nll = _classification_candidate_label_nlls(
+        model,
+        batch,
+        eos_token_id=eos_token_id,
+    )
+    return F.cross_entropy(
+        -candidate_nll,
+        batch["class_labels"],
+        reduction="none",
+    )
+
+
+def _classification_candidate_nll_loss(
+    model,
+    batch: Mapping[str, torch.Tensor],
+    *,
+    eos_token_id: int | None,
+) -> torch.Tensor:
+    return _classification_candidate_nll_values(
+        model,
+        batch,
+        eos_token_id=eos_token_id,
+    ).mean()
 
 
 def _per_example_classification_losses(
@@ -1033,6 +1206,7 @@ def _per_example_classification_losses(
     dataset_config: Mapping[str, Any],
     max_length: int,
     batch_size: int,
+    objective: str = "label_nll",
 ) -> torch.Tensor:
     if dataset is None or len(dataset) == 0:
         raise ValueError("calibration gate dataset must be non-empty")
@@ -1041,9 +1215,38 @@ def _per_example_classification_losses(
     device = _model_input_device(model)
     label_column = dataset_config["label_column"]
     examples = [(item, int(item[label_column])) for item in dataset]
+    if objective not in {"label_nll", "class_nll"}:
+        raise ValueError("classification objective must be 'label_nll' or 'class_nll'")
     with torch.inference_mode():
         for start in range(0, len(examples), batch_size):
             group = examples[start : start + batch_size]
+            if objective == "class_nll":
+                candidates = [
+                    (item, candidate)
+                    for item, _ in group
+                    for candidate in range(len(_label_texts(dataset_config)))
+                ]
+                batch = _collate_examples(
+                    tokenizer,
+                    candidates,
+                    dataset_config=dataset_config,
+                    max_length=max_length,
+                )
+                batch["class_labels"] = torch.tensor(
+                    [true_label for _, true_label in group],
+                    dtype=torch.long,
+                )
+                model_inputs = _move_batch(batch, device)
+                values.append(
+                    _classification_candidate_nll_values(
+                        model,
+                        model_inputs,
+                        eos_token_id=tokenizer.eos_token_id,
+                    )
+                    .detach()
+                    .cpu()
+                )
+                continue
             batch = _collate_examples(
                 tokenizer,
                 group,
@@ -1084,6 +1287,7 @@ def _mean_classification_loss(
     dataset_config: Mapping[str, Any],
     max_length: int,
     batch_size: int,
+    objective: str = "label_nll",
 ) -> float:
     losses = _per_example_classification_losses(
         model,
@@ -1092,6 +1296,7 @@ def _mean_classification_loss(
         dataset_config=dataset_config,
         max_length=max_length,
         batch_size=batch_size,
+        objective=objective,
     )
     return float(losses.mean().item())
 
@@ -1148,6 +1353,7 @@ def _rift_gate_state(
         dataset_config=dataset_config,
         max_length=max_length,
         batch_size=batch_size,
+        objective=str(experiment.get("calibration_gate_objective", "label_nll")),
     )
     selected_state = {name: value for name, value in current_state.items()}
     selected_updates = {
@@ -1176,6 +1382,7 @@ def _rift_gate_state(
             dataset_config=dataset_config,
             max_length=max_length,
             batch_size=batch_size,
+            objective=str(experiment.get("calibration_gate_objective", "label_nll")),
         )
         mean_delta = float((candidate_losses - current_losses).mean().item())
         if mean_delta <= float(experiment.get("rift_max_mean_increase", 0.0)) and (
@@ -1223,6 +1430,7 @@ def _whole_update_gate_state(
         dataset_config=dataset_config,
         max_length=max_length,
         batch_size=batch_size,
+        objective=str(experiment.get("calibration_gate_objective", "label_nll")),
     )
     selected_state = {name: value for name, value in current_state.items()}
     selected_updates = {
@@ -1251,6 +1459,7 @@ def _whole_update_gate_state(
             dataset_config=dataset_config,
             max_length=max_length,
             batch_size=batch_size,
+            objective=str(experiment.get("calibration_gate_objective", "label_nll")),
         )
         mean_delta = float((candidate_losses - current_losses).mean().item())
         if mean_delta <= 0.0 and (selected_route == "reject" or mean_delta < selected_delta):
@@ -1494,6 +1703,19 @@ def _git_commit() -> str:
         return "unknown"
 
 
+def _git_worktree_dirty() -> bool | None:
+    try:
+        status = subprocess.check_output(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=ROOT,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+        return bool(status.strip())
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
 def _apply_overrides(config: dict[str, Any], args: argparse.Namespace) -> None:
     if args.output_dir is not None:
         config["output_dir"] = str(args.output_dir)
@@ -1596,6 +1818,15 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
         experiment.get("calibration_gradient_examples", 0)
     ) <= 0:
         raise ValueError(f"{method} requires calibration_gradient_examples > 0")
+    if int(experiment.get("calibration_gradient_batch_size", 1)) <= 0:
+        raise ValueError("calibration_gradient_batch_size must be positive")
+    for field in (
+        "component_score_objective",
+        "calibration_gate_objective",
+        "monitor_objective",
+    ):
+        if str(experiment.get(field, "label_nll")) not in {"label_nll", "class_nll"}:
+            raise ValueError(f"{field} must be 'label_nll' or 'class_nll'")
     if method in {"rift", "alignfed_calibration"} and int(
         experiment.get("calibration_gate_examples", 0)
     ) <= 0:

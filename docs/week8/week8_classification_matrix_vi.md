@@ -7,13 +7,17 @@ Status: infrastructure ready, GPU matrix pending
 - Task chinh: SST-2, QNLI, MNLI-m va MNLI-mm.
 - Regime chinh: IID homogeneous, IID heterogeneous, non-IID high-staleness.
 - Seeds: 6 seed de co paired statistical report.
-- Metrics chinh: Accuracy, label NLL, Brier, Harmful, Late harmful, cumulative
+- Metrics chinh: Accuracy, class-normalized NLL, Brier, Harmful, Late harmful, cumulative
   harm, Acceptance va measured-client coverage.
-- Sequence NLL va EOS NLL duoc ghi rieng de chan doan; evaluator classification
-  chi dung label NLL, khong dung EOS de quyet dinh nhan.
-- Local training, RIFT component-scoring gradient va calibration gate cung dung
-  label-only objective; khong con truong hop filter chon component theo EOS trong
-  khi gate danh gia theo label NLL.
+- Class-normalized NLL la cross-entropy tren xac suat cua tat ca candidate label;
+  day la NLL chinh vi no do truc tiep kha nang phan biet lop va ho tro SST-2,
+  QNLI lan MNLI ba lop.
+- Absolute label NLL, sequence NLL va EOS NLL duoc ghi rieng de chan doan. Chung
+  khong con duoc dung lam GO gate vi co the cung giam cho ca nhan dung va nhan sai.
+- Local training van dung supervised true-label token loss. RIFT component
+  scoring, calibration gate, harmful monitor va analyzer cung dung
+  `class_nll`, tranh objective mismatch da lam accuracy xau di du absolute label
+  NLL van giam.
 
 ## Da review
 
@@ -26,7 +30,8 @@ Status: infrastructure ready, GPU matrix pending
 - Week 7: buffered trace/group metadata da co, nhung model runner 3B hien tai van immediate async `buffer_size=1`.
 - MNLI-m/mm da duoc implement voi evaluator 3 lop: entailment, neutral, contradiction.
 - MNLI dung `validation_matched` va `validation_mismatched` rieng, voi `run_name` rieng de analyzer khong tron hai split.
-- `binary_nll` chi co y nghia voi SST-2/QNLI; MNLI dung `label_nll`, Accuracy va multiclass Brier.
+- `binary_nll` chi la alias cua `class_nll` voi SST-2/QNLI; MNLI dung
+  `class_nll`, Accuracy va multiclass Brier.
   `sequence_nll` va `eos_nll` chi la metric chan doan.
 - Cac config `week4_*` la schema/backbone BERT nho, khong duoc dung lam base cho runner Qwen 3B.
 - Week 8 dung `kaggle_3b_rift_competitors.json` lam base va overlay task/regime bang script matrix.
@@ -44,12 +49,14 @@ Status: infrastructure ready, GPU matrix pending
 - Acceptance gate: RIFT phai giu acceptance rate toi thieu 30% tren measured updates.
 - Analyzer doc gate truc tiep tu matrix manifest, reject schema/config/matrix
   fingerprint cu, duplicate run va mixed Git commit.
+- Schema v4 ghi `class_nll` va trang thai clean/dirty cua Git worktree; output
+  schema v3 cu se bi chay lai thay vi tron voi matrix moi.
 - Hard-slice schedule thu 100 returns (8 warmup + 92 measured) de moi logical
   client co co hoi xuat hien; phan bo return van co the lech theo compute time.
 - Runner log them measured return/accept count tung client, `tau >= 16` extreme
   tail, cumulative/normalized harm, worst-step loss, utility per returned update,
   route rate va retained fraction.
-- Best accuracy va best label NLL duoc report kem seed nhu descriptive metrics;
+- Best accuracy va best class NLL duoc report kem seed nhu descriptive metrics;
   chung khong thay mean/CI va khong duoc dung mot minh de quyet dinh GO.
 - Paired statistical report voi CI95.
 - Hard-slice verdict cho non-IID + high staleness.
@@ -90,7 +97,7 @@ Analyzer tu dong quet de quy cac `result.json`, sau do kiem tra paired seed tron
 - Notebook dung dev seeds `3101-3103` va output `week8_development` cho
   `focused`; confirmation seeds `4101-4106` chi duoc dung trong `full` va ghi
   sang `week8_classification_matrix`, nen pilot khong lam ban output cuoi.
-- Chon mot Pareto configuration dua tren late harm, label NLL, accuracy va
+- Chon mot Pareto configuration dua tren late harm, class NLL, accuracy va
   acceptance; khong chon rieng seed co best score.
 - Dong bang config truoc khi chay cac seed 4101-4106.
 - Cac metric co the lam RIFT mat loi the bieu kien (client coverage, cumulative

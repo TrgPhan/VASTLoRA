@@ -1,6 +1,6 @@
 {
   "name": "riftlora-week8-classification-matrix",
-  "required_schema_version": 3,
+  "required_schema_version": 4,
   "description": "Week 8 main classification matrix for SST-2, QNLI, and MNLI matched/mismatched under IID, IID heterogeneous, and non-IID high-staleness slices.",
   "runner": {
     "script": "scripts/run_kaggle_3b.py",
@@ -9,7 +9,11 @@
   },
   "experiment": {
     "collected_returns": 92,
-    "extreme_tau": 16
+    "extreme_tau": 16,
+    "calibration_gradient_batch_size": 2,
+    "component_score_objective": "class_nll",
+    "calibration_gate_objective": "class_nll",
+    "monitor_objective": "class_nll"
   },
   "tasks": [
     {
@@ -105,7 +109,7 @@
     "requires_positive_cumulative_late_harm_reduction": true
   },
   "notes": [
-    "MNLI-m/mm uses the three-way generative evaluator; confirm label calibration before treating it as a primary claim.",
+    "All classification tasks use candidate-normalized class NLL for filtering, gating, monitoring, and the primary NLL comparison; absolute label and sequence NLL remain diagnostics.",
     "This manifest is for the main thesis matrix and does not imply a full buffered model-runner implementation."
   ]
 }

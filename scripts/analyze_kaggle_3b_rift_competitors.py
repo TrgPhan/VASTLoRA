@@ -177,6 +177,10 @@ def validate_result_provenance(
     commits = set(frame["git_commit"].dropna().astype(str))
     if bool(frame["git_commit"].isna().any()) or len(commits) != 1 or "unknown" in commits:
         errors.append(f"runs must share one known git commit; actual={sorted(commits)}")
+    if "git_worktree_dirty" not in frame or bool(frame["git_worktree_dirty"].isna().any()):
+        errors.append("one or more runs are missing git_worktree_dirty provenance")
+    elif bool(frame["git_worktree_dirty"].astype(bool).any()):
+        errors.append("official matrix runs must use a clean Git worktree")
 
     for (task, regime), group in frame.groupby(["task", "regime"]):
         hashes = set(group["config_fingerprint"].dropna().astype(str))
@@ -259,14 +263,16 @@ def load_results(input_dir: Path) -> pd.DataFrame:
                 "task": payload.get("task", payload.get("config", {}).get("dataset", {}).get("subset", "unknown")),
                 "regime": payload.get("regime", payload.get("config", {}).get("experiment", {}).get("regime_name", "default")),
                 "git_commit": payload["git_commit"],
+                "git_worktree_dirty": payload.get("git_worktree_dirty"),
                 "matrix_sha256": provenance.get("matrix_sha256"),
                 "config_fingerprint": payload.get("config_fingerprint"),
                 "configured_collected_returns": experiment.get("collected_returns"),
                 **metrics,
-                # Schema v2 supplies label NLL explicitly.  Fall back to the
-                # old total NLL so historical pilot outputs remain readable.
+                # Class-normalized NLL is the proper classification objective.
+                # Keep older label/sequence NLL artifacts readable.
                 "classification_nll": metrics.get(
-                    "final_label_nll", metrics["final_nll"]
+                    "final_class_nll",
+                    metrics.get("final_label_nll", metrics["final_nll"]),
                 ),
             }
         )
@@ -293,9 +299,12 @@ def summarize(frame: pd.DataFrame) -> pd.DataFrame:
                 else 0.0,
                 "best_final_accuracy": float(group.loc[best_accuracy_index, "final_accuracy"]),
                 "best_final_accuracy_seed": int(group.loc[best_accuracy_index, "seed"]),
-                # Classification comparisons use label NLL.  Sequence NLL
-                # includes EOS and is retained as a diagnostic only.
+                # Classification comparisons use class-normalized NLL when
+                # available. Label and sequence NLL remain diagnostics.
                 "final_nll_mean": float(group["classification_nll"].mean()),
+                "label_nll_mean": float(
+                    group.get("final_label_nll", group["classification_nll"]).mean()
+                ),
                 "sequence_nll_mean": float(group["final_nll"].mean()),
                 "best_final_nll": float(group.loc[best_nll_index, "classification_nll"]),
                 "best_final_nll_seed": int(group.loc[best_nll_index, "seed"]),
@@ -701,7 +710,7 @@ def render_report(
         [
             "## Method Summary",
             "",
-            "The Loss column is label NLL; sequence NLL is retained as a diagnostic.",
+            "The Loss column is class-normalized NLL when available; absolute label and sequence NLL remain diagnostics.",
             "",
             "| Task | Regime | Method | Fidelity | Seeds | Accuracy | Loss | Harmful | Late harmful | Acceptance |",
             "|---|---|---|---|---:|---:|---:|---:|---:|---:|",
@@ -724,7 +733,7 @@ def render_report(
             "",
             "Best values may come from different seeds and are not used by the GO gate.",
             "",
-            "| Task | Regime | Method | Best accuracy | Seed | Best label NLL | Seed |",
+            "| Task | Regime | Method | Best accuracy | Seed | Best class NLL | Seed |",
             "|---|---|---|---:|---:|---:|---:|",
         ]
     )

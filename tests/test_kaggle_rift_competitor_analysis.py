@@ -30,6 +30,7 @@ def _write_result(root: Path, method: str, task: str, regime: str, seed: int) ->
         "task": task,
         "regime": regime,
         "git_commit": "abc123",
+        "git_worktree_dirty": False,
         "metrics": {
             "final_accuracy": 0.75 if method == "rift" else 0.70,
             "final_nll": 0.50 if method == "rift" else 0.60,
@@ -187,6 +188,7 @@ def test_result_provenance_rejects_old_or_mixed_runs() -> None:
                 "matrix_sha256": expected_sha,
                 "config_fingerprint": "cfg-a",
                 "git_commit": "abc",
+                "git_worktree_dirty": True,
                 "configured_collected_returns": 32,
                 "measured_event_count": 32,
             },
@@ -199,6 +201,7 @@ def test_result_provenance_rejects_old_or_mixed_runs() -> None:
                 "matrix_sha256": "wrong",
                 "config_fingerprint": "cfg-b",
                 "git_commit": "def",
+                "git_worktree_dirty": False,
                 "configured_collected_returns": 92,
                 "measured_event_count": 92,
             },
@@ -211,4 +214,5 @@ def test_result_provenance_rejects_old_or_mixed_runs() -> None:
     assert any("schema_version" in error for error in errors)
     assert any("matrix fingerprint mismatch" in error for error in errors)
     assert any("one known git commit" in error for error in errors)
+    assert any("clean Git worktree" in error for error in errors)
     assert any("collected_returns mismatch" in error for error in errors)

@@ -2,10 +2,12 @@
 
 import torch
 from torch import nn
+import pytest
 
 from riftlora.lowrank import CompactSVD
 from riftlora.scale.objective import (
     filter_compact_by_scores,
+    score_compact_components_microbatched,
     score_compact_components_with_hooks,
 )
 
@@ -54,4 +56,33 @@ def test_component_hook_scores_descent_direction() -> None:
     assert result.retained_rank == 1
     filtered = filter_compact_by_scores({"layer": innovation}, result.scores)
     assert filtered["layer"].rank == 1
+
+
+def test_microbatched_component_scores_match_full_batch() -> None:
+    model = ToyModel()
+    innovation = CompactSVD(
+        torch.tensor([[1.0]]),
+        torch.tensor([1.0]),
+        torch.tensor([[1.0], [0.0]]),
+    )
+    innovations = {"layer": innovation}
+    first = {"x": torch.tensor([[1.0, 0.0]]), "target": torch.tensor([[1.0]])}
+    second = {
+        "x": torch.tensor([[2.0, 0.0], [3.0, 0.0]]),
+        "target": torch.tensor([[0.5], [2.0]]),
+    }
+    full = {
+        "x": torch.cat([first["x"], second["x"]]),
+        "target": torch.cat([first["target"], second["target"]]),
+    }
+
+    expected = score_compact_components_with_hooks(model, innovations, full)
+    actual = score_compact_components_microbatched(
+        model,
+        innovations,
+        [(first, 1.0), (second, 2.0)],
+    )
+
+    assert torch.allclose(actual.scores["layer"], expected.scores["layer"])
+    assert actual.calibration_loss == pytest.approx(expected.calibration_loss)
 

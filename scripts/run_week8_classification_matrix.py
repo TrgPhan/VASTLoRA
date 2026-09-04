@@ -218,6 +218,7 @@ def _completed_result_matches(
         and provenance.get("matrix_sha256")
         == config.get("provenance", {}).get("matrix_sha256")
         and payload.get("config_fingerprint") == _runner_config_fingerprint(config)
+        and payload.get("git_worktree_dirty") is False
     )
 
 

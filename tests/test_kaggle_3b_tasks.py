@@ -134,8 +134,10 @@ def test_mnli_evaluator_supports_three_class_scores() -> None:
     )
 
     assert metrics["binary_nll"] is None
+    assert metrics["class_nll"] == torch.log(torch.tensor(3.0)).item()
     assert 0.0 <= metrics["brier"] <= 2.0
     assert len(details) == 3
+    assert "class_nll" in details[0]
     assert "prob_label_2" in details[0]
 
 
@@ -187,6 +189,31 @@ def test_classification_uses_label_loss_not_eos_loss() -> None:
 
     assert metrics["binary_nll"] is not None
     assert details[0]["predicted_label"] == 0
+
+
+def test_class_nll_objective_compares_all_candidate_labels() -> None:
+    class FakeModel:
+        def __call__(self, *, input_ids, attention_mask):
+            logits = torch.zeros((*input_ids.shape, 8))
+            logits[0, 0, 2] = 5.0
+            logits[3, 0, 3] = 5.0
+            return SimpleNamespace(logits=logits)
+
+    batch = {
+        "input_ids": torch.tensor([[1, 2], [1, 3], [1, 2], [1, 3]]),
+        "attention_mask": torch.ones((4, 2), dtype=torch.long),
+        "labels": torch.tensor([[-100, 2], [-100, 3], [-100, 2], [-100, 3]]),
+        "class_labels": torch.tensor([0, 1]),
+    }
+
+    losses = MODULE._classification_candidate_nll_values(
+        FakeModel(),
+        batch,
+        eos_token_id=4,
+    )
+
+    assert losses.shape == (2,)
+    assert torch.all(losses < 0.2)
 
 
 def test_label_histogram_is_stable_and_string_keyed() -> None:

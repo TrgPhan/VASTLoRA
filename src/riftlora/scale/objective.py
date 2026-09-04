@@ -1,7 +1,9 @@
 ﻿from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Mapping
+import math
+from typing import Callable, Mapping
 
 import torch
 
@@ -40,6 +42,10 @@ def score_compact_components_with_hooks(
     model: torch.nn.Module,
     innovations: Mapping[str, CompactSVD],
     batch: Mapping[str, torch.Tensor],
+    *,
+    loss_fn: Callable[
+        [torch.nn.Module, Mapping[str, torch.Tensor]], torch.Tensor
+    ] | None = None,
 ) -> ComponentScoreResult:
     """Score rank-one update components without materializing dense gradients.
 
@@ -78,7 +84,7 @@ def score_compact_components_with_hooks(
     try:
         model.zero_grad(set_to_none=True)
         model.eval()
-        loss = model(**batch).loss
+        loss = model(**batch).loss if loss_fn is None else loss_fn(model, batch)
         active = [value for value in coefficients.values() if value.requires_grad]
         grads = torch.autograd.grad(loss, active, allow_unused=True) if active else []
         grad_by_id = {
@@ -104,6 +110,46 @@ def score_compact_components_with_hooks(
         for handle in handles:
             handle.remove()
         model.zero_grad(set_to_none=True)
+
+
+def score_compact_components_microbatched(
+    model: torch.nn.Module,
+    innovations: Mapping[str, CompactSVD],
+    weighted_batches: Iterable[tuple[Mapping[str, torch.Tensor], float]],
+    *,
+    loss_fn: Callable[
+        [torch.nn.Module, Mapping[str, torch.Tensor]], torch.Tensor
+    ] | None = None,
+) -> ComponentScoreResult:
+    """Average scores while releasing each calibration graph after use."""
+
+    score_sums = {
+        name: torch.zeros(compact.rank, dtype=torch.float32)
+        for name, compact in innovations.items()
+    }
+    loss_sum = 0.0
+    total_weight = 0.0
+    for batch, weight in weighted_batches:
+        weight = float(weight)
+        if not math.isfinite(weight) or weight <= 0.0:
+            raise ValueError("microbatch weights must be finite and positive")
+        result = score_compact_components_with_hooks(
+            model,
+            innovations,
+            batch,
+            loss_fn=loss_fn,
+        )
+        for name, values in result.scores.items():
+            score_sums[name] += values * weight
+        loss_sum += result.calibration_loss * weight
+        total_weight += weight
+
+    if total_weight == 0.0:
+        raise ValueError("weighted_batches must contain at least one microbatch")
+    return ComponentScoreResult(
+        scores={name: values / total_weight for name, values in score_sums.items()},
+        calibration_loss=loss_sum / total_weight,
+    )
 
 
 def filter_compact_by_scores(

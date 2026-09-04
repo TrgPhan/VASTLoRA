@@ -42,6 +42,7 @@ def test_completed_result_must_match_schema_matrix_and_config(tmp_path: Path) ->
                 "seed": 4101,
                 "provenance": {"matrix_sha256": "matrix-1"},
                 "config_fingerprint": "cfg-1",
+                "git_worktree_dirty": False,
             }
         ),
         encoding="utf-8",
@@ -57,6 +58,18 @@ def test_completed_result_must_match_schema_matrix_and_config(tmp_path: Path) ->
 
     payload = json.loads(result_path.read_text(encoding="utf-8"))
     payload["config_fingerprint"] = "stale"
+    result_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert not MODULE._completed_result_matches(
+        result_path,
+        config=config,
+        method="rift",
+        seed=4101,
+        matrix=matrix,
+    )
+
+    payload["config_fingerprint"] = "cfg-1"
+    payload["git_worktree_dirty"] = True
     result_path.write_text(json.dumps(payload), encoding="utf-8")
 
     assert not MODULE._completed_result_matches(

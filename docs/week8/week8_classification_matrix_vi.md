@@ -87,6 +87,9 @@ Analyzer tu dong quet de quy cac `result.json`, sau do kiem tra paired seed tron
 ## Tuning guardrail
 
 - Tune RIFT chi tren dev seeds/task da khai bao truoc.
+- Notebook dung dev seeds `3101-3103` va output `week8_development` cho
+  `focused`; confirmation seeds `4101-4106` chi duoc dung trong `full` va ghi
+  sang `week8_classification_matrix`, nen pilot khong lam ban output cuoi.
 - Chon mot Pareto configuration dua tren late harm, label NLL, accuracy va
   acceptance; khong chon rieng seed co best score.
 - Dong bang config truoc khi chay cac seed 4101-4106.

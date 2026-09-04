@@ -26,6 +26,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--regime", action="append")
     parser.add_argument("--method", action="append")
     parser.add_argument("--seed", action="append", type=int)
+    parser.add_argument(
+        "--output-root",
+        type=Path,
+        default=ROOT / "outputs" / "week8_classification_matrix",
+    )
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -78,8 +83,7 @@ def main() -> None:
                         _validate_generated_config(config, method)
                         validated_specs.add(spec_key)
                     output_dir = (
-                        ROOT
-                        / "outputs/week8_classification_matrix"
+                        args.output_root
                         / str(task.get("run_name", task_name))
                         / regime_name
                         / method

@@ -1,6 +1,7 @@
 # Week 8 - Main classification matrix
 
-Status: infrastructure ready, GPU matrix pending
+Status: local 1.5B held-out complete (`NO_GO` for the strong claim); full 3B
+GPU matrix pending
 
 ## Pham vi chot
 
@@ -43,6 +44,9 @@ Status: infrastructure ready, GPU matrix pending
 - Development screening tren Qwen2.5-1.5B da chay du QNLI/MNLI-m/MNLI-mm,
   4 method va 3 seed. Ket qua xac nhan pipeline va Pareto safety signal, nhung
   chi co mot late event moi run nen khong du de ket luan thesis.
+- Held-out confirmation 1.5B da chay 72/72 run tren seeds `3201-3206`, moi run
+  co 4 late events va full client coverage. RIFT khong pass strong gate truoc
+  Spectral filter/AlignFed calibration; xem report chi tiet ben duoi.
 
 ## Deliverables
 
@@ -78,6 +82,8 @@ Status: infrastructure ready, GPU matrix pending
 - [scripts/run_week8_classification_matrix.py](../../scripts/run_week8_classification_matrix.py)
 - [Local Qwen2.5-1.5B pilot results](local_1_5b_rift_pilot_results_vi.md)
 - [Bang tong hop ket qua bon task](week8_all_tasks_results_summary_vi.md)
+- [Held-out confirmation protocol](local_1_5b_remaining_tasks_confirmation_protocol_vi.md)
+- [Held-out confirmation results](local_1_5b_remaining_tasks_confirmation_results_vi.md)
 
 ## Cach chay
 

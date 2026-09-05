@@ -1,87 +1,93 @@
 # Week 8 - Tong hop ket qua Qwen2.5-1.5B
 
-Ngay tong hop: 2026-09-05
+Ngay cap nhat: 2026-09-06
 
-Tat ca cac dong dung cung backbone `Qwen/Qwen2.5-1.5B-Instruct`. Ten trong
-bang la aggregation/filtering method, khong phai model backbone khac nhau.
+Tat ca cac dong dung backbone `Qwen/Qwen2.5-1.5B-Instruct`. Ten trong bang
+la aggregation/filtering method, khong phai backbone khac nhau. Cot `dev` va
+`held-out` duoc tach rieng de khong con nham 87.50% SST-2 dev voi 90.28%
+SST-2 held-out.
 
 ## Accuracy
 
-Don vi: phan tram, cang cao cang tot.
+Don vi phan tram, cang cao cang tot.
 
-| Method | SST-2 | QNLI | MNLI-m | MNLI-mm |
-|---|---:|---:|---:|---:|
-| RIFT | **87.50%** | **78.65%** | **67.71%** | **76.04%** |
-| Spectral filter | **87.50%** | **78.65%** | 67.19% | **76.04%** |
-| AlignFed calibration | **87.50%** | **78.65%** | **67.71%** | **76.04%** |
-| FedRot | 73.61% | 76.04% | 64.06% | 65.10% |
-| FedEx | 86.81% | - | - | - |
-| Freshness | 86.81% | - | - | - |
-| VAST | 86.81% | - | - | - |
-| MTiP adaptive | 87.15% | - | - | - |
+| Method | SST-2 dev | SST-2 held-out | QNLI held-out | MNLI-m held-out | MNLI-mm held-out |
+|---|---:|---:|---:|---:|---:|
+| RIFT | **87.50** | **90.28** | 78.993 | 80.556 | 75.868 |
+| Spectral filter | **87.50** | **90.28** | 78.993 | **80.903** | **76.910** |
+| AlignFed calibration | **87.50** | 89.58 | **79.167** | 80.035 | 76.215 |
+| FedRot | 73.61 | 88.89 | 61.458 | 64.757 | 63.368 |
+| FedEx | 86.81 | - | - | - | - |
+| Freshness | 86.81 | - | - | - | - |
+| VAST | 86.81 | - | - | - | - |
+| MTiP adaptive | 87.15 | - | - | - | - |
 
 ## Class NLL
 
 Cang thap cang tot.
 
-| Method | SST-2 | QNLI | MNLI-m | MNLI-mm |
+| Method | SST-2 dev | SST-2 held-out | QNLI held-out | MNLI-m held-out | MNLI-mm held-out |
+|---|---:|---:|---:|---:|---:|
+| RIFT | 0.321890 | **0.213775** | 0.441761 | 0.559449 | 0.587634 |
+| Spectral filter | **0.321652** | 0.214077 | 0.440928 | **0.545385** | **0.573481** |
+| AlignFed calibration | 0.328915 | 0.219613 | **0.440826** | 0.554471 | 0.582853 |
+| FedRot | 0.559643 | 0.273088 | 1.114409 | 1.656944 | 1.685658 |
+| FedEx | 0.339258 | - | - | - | - |
+| Freshness | 0.345164 | - | - | - | - |
+| VAST | 0.345806 | - | - | - | - |
+| MTiP adaptive | 0.352232 | - | - | - | - |
+
+## Harmful update rate
+
+Don vi phan tram measured updates, cang thap cang tot.
+
+| Method | SST-2 dev | SST-2 held-out | QNLI held-out | MNLI-m held-out | MNLI-mm held-out |
+|---|---:|---:|---:|---:|---:|
+| RIFT | **0.00** | **4.17** | **32.292** | **13.542** | **13.542** |
+| Spectral filter | 4.17 | 8.33 | 34.375 | 28.125 | 28.125 |
+| AlignFed calibration | 6.25 | 10.42 | 36.458 | **13.542** | **13.542** |
+| FedRot | 56.25 | 52.08 | 62.500 | 70.833 | 70.833 |
+| FedEx | 39.58 | - | - | - | - |
+| Freshness | 41.67 | - | - | - | - |
+| VAST | 35.42 | - | - | - | - |
+| MTiP adaptive | 41.67 | - | - | - | - |
+
+## Late harmful update rate
+
+Chi bao cao held-out; cang thap cang tot.
+
+| Method | SST-2 held-out | QNLI held-out | MNLI-m held-out | MNLI-mm held-out |
 |---|---:|---:|---:|---:|
-| RIFT | 0.321890 | 0.458886 | 0.729945 | 0.639211 |
-| Spectral filter | **0.321652** | **0.457380** | **0.724801** | 0.630478 |
-| AlignFed calibration | 0.328915 | 0.459272 | 0.724837 | **0.626093** |
-| FedRot | 0.559643 | 0.467754 | 0.848227 | 0.791774 |
-| FedEx | 0.339258 | - | - | - |
-| Freshness | 0.345164 | - | - | - |
-| VAST | 0.345806 | - | - | - |
-| MTiP adaptive | 0.352232 | - | - | - |
-
-## Harmful Update Rate
-
-Don vi: phan tram measured updates, cang thap cang tot.
-
-| Method | SST-2 | QNLI | MNLI-m | MNLI-mm |
-|---|---:|---:|---:|---:|
-| RIFT | **0.00%** | **16.67%** | **25.00%** | **25.00%** |
-| Spectral filter | 4.17% | 33.33% | 29.17% | 29.17% |
-| AlignFed calibration | 6.25% | **16.67%** | 37.50% | 37.50% |
-| FedRot | 56.25% | 33.33% | 50.00% | 50.00% |
-| FedEx | 39.58% | - | - | - |
-| Freshness | 41.67% | - | - | - |
-| VAST | 35.42% | - | - | - |
-| MTiP adaptive | 41.67% | - | - | - |
+| RIFT | **0.00** | **12.500** | 8.333 | 8.333 |
+| Spectral filter | **0.00** | 29.167 | 33.333 | 33.333 |
+| AlignFed calibration | 8.33 | 37.500 | **4.167** | **4.167** |
+| FedRot | 25.00 | 33.333 | 41.667 | 41.667 |
 
 ## Protocol
 
-- SST-2 trong bang la development seeds 2101-2103, 4 warmup + 16 measured
-  returns va 96 eval examples. Day la protocol duy nhat co du ca 8 method.
-- QNLI/MNLI la development seeds 3101-3103, 2 warmup + 8 measured returns va
-  64 eval examples. Chi bon method manh da duoc chay.
-- Cac task deu dung label-shard non-IID, heterogeneous rank va heterogeneous
-  compute time. Day la bang tong hop descriptive, khong phai mot statistical
-  cross-task leaderboard.
-- QNLI/MNLI chi co mot event `staleness >= late_tau` moi run. Vi vay late
-  harmful rate co the nhay 0%/100% theo mot event va chua du tin cay de lam
-  thesis verdict.
+- SST-2 dev: seeds `2101-2103`, offset 0, 4 warmup + 16 measured returns.
+- SST-2 held-out: seeds `2201-2203`, offset 128, cung ngan sach returns.
+- QNLI/MNLI held-out: seeds `3201-3206`, offset 64, 4 warmup + 16 measured
+  returns, 96 eval examples, 4 late events/run va full client coverage.
+- QNLI/MNLI dung 72/72 run tai commit sach `1e8bfb9`; khong cherry-pick seed.
+- Tat ca task deu dung label-shard non-IID, heterogeneous rank va compute time.
+- Spectral filter va AlignFed calibration la matched controls trong simulator,
+  khong phai official full-paper implementation.
 
-## SST-2 held-out confirmation
-
-Tren seeds 2201-2203 va eval offset 128, RIFT dat 90.28% accuracy, class NLL
-0.213775, harmful 4.17% va late harmful 0%. Spectral cung dat 90.28% accuracy
-nhung class NLL 0.214077 va harmful 8.33%. AlignFed dat 89.58% accuracy,
-class NLL 0.219613 va harmful 10.42%. FedRot dat 88.89% accuracy, class NLL
-0.273088 va harmful 52.08%.
+Chi SST-2 dev co du ca tam method. Dau gach `-` nghia la chua co held-out
+evidence, khong phai accuracy/NLL bang 0.
 
 ## Ket luan
 
-- RIFT co accuracy cao nhat hoac dong cao nhat tren ca bon task.
-- RIFT co harmful rate thap nhat hoac dong thap nhat tren ca bon task. Day la
-  tin hieu cross-task manh nhat hien tai.
-- Spectral filter va AlignFed van co class NLL tot hon RIFT tren mot so task,
-  dac biet MNLI. RIFT khong phai NLL winner tuyet doi.
-- FedRot kem on dinh va co harmful rate cao. FedEx, Freshness, VAST va MTiP
-  chua duoc chay tren QNLI/MNLI trong protocol moi, nen khong duoc suy dien ket
-  qua tu SST-2 sang cac task do.
-- Verdict dung muc la `preliminary GO` cho kha nang generalize accuracy va
-  update safety cua implementation. Final thesis van `INCONCLUSIVE` cho den
-  khi matrix 3B co 92 measured returns, 6 held-out seed, du late events, full
-  client coverage va paired confidence interval.
+- RIFT co harmful rate thap nhat hoac dong thap nhat tren ca bon held-out task.
+- RIFT khong phai accuracy/NLL winner tren QNLI va MNLI. Spectral filter thang
+  RIFT ro nhat tai MNLI-mm accuracy: `+1.042 pp` cho Spectral, paired CI95 cua
+  RIFT gain la `[-2.019, -0.064]`.
+- AlignFed calibration co late harmful thap hon RIFT tren ca hai MNLI slice.
+- RIFT van thang FedRot rat manh, nhung dieu do khong du de pass claim "tot
+  hon moi doi thu".
+- Formal held-out verdict cho gia thuyet manh/config hien tai la **`NO_GO`**.
+  Ket qua day du nam trong
+  `docs/week8/local_1_5b_remaining_tasks_confirmation_results_vi.md`.
+- Day van chi la bang chung local 1.5B. Khong duoc suy dien thanh ket luan 3B
+  hoac claim thang official Spectral Surgery/AlignFed.

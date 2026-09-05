@@ -39,3 +39,18 @@ win count giam anh huong cua outlier ma khong pha vo held-out protocol.
 acceptance, client coverage, late-event count va late-harm improvement voi moi
 doi thu. Neu RIFT chi thang accuracy hoac harmful trung binh nhung CI/gate
 khong pass, verdict phai la `INCONCLUSIVE` hoac `NO_GO` dung theo output.
+
+## Execution amendment
+
+Lan chay ban dau tai commit `8734b87` gap CUDA OOM tren GPU 4 GB vi runner
+project logits cho toan bo sequence va vocabulary, ke ca cac token bi
+`ignore_index=-100`. Khong co hyperparameter, seed, offset, data split, method
+hay gate nao duoc thay doi.
+
+- Commit `218c29d` gioi han cross-entropy vao token label duoc supervise.
+- Commit `1e8bfb9` dung `logits_to_keep` de chi project suffix chua label.
+- Regression tests so sanh loss va gradient voi phep tinh dense cu.
+- Cac vong bi OOM va vong tron Git commit bi loai toan bo, khong chon tung run.
+- Matrix chinh thuc duoc chay lai 72/72 run tai duy nhat commit sach `1e8bfb9`.
+
+Day la thay doi implementation de giam bo nho, khong phai post-hoc tuning RIFT.

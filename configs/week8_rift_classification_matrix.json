@@ -19,7 +19,9 @@
     {
       "name": "sst2",
       "base_config": "configs/kaggle_3b_rift_competitors.json",
-      "output_prefix": "outputs/week8_sst2_matrix"
+      "output_prefix": "outputs/week8_sst2_matrix",
+      "development_eval_offset": 0,
+      "confirmation_eval_offset": 256
     },
     {
       "name": "qnli",
@@ -33,7 +35,15 @@
       "label_column": "label",
       "label_texts": [" yes", " no"],
       "max_train_examples": 4096,
-      "eval_examples": 256
+      "eval_examples": 256,
+      "development_eval_offset": 0,
+      "confirmation_eval_offset": 256,
+      "model_overrides": {
+        "max_length": 192
+      },
+      "experiment_overrides": {
+        "calibration_sampling": "stratified"
+      }
     },
     {
       "name": "mnli_m",
@@ -46,9 +56,23 @@
       "premise_column": "premise",
       "hypothesis_column": "hypothesis",
       "label_column": "label",
-      "label_texts": [" entailment", " neutral", " contradiction"],
+      "label_texts": [" true", " unknown", " false"],
+      "prompt_style": "truth_value",
       "max_train_examples": 4096,
-      "eval_examples": 512
+      "eval_examples": 512,
+      "development_eval_offset": 0,
+      "confirmation_eval_offset": 512,
+      "model_overrides": {
+        "max_length": 256
+      },
+      "experiment_overrides": {
+        "calibration_gradient_examples": 48,
+        "calibration_gate_examples": 96,
+        "monitor_examples": 96,
+        "calibration_sampling": "stratified",
+        "rift_gate_confidence_z": 0.25,
+        "eval_batch_size": 2
+      }
     },
     {
       "name": "mnli_mm",
@@ -61,9 +85,23 @@
       "premise_column": "premise",
       "hypothesis_column": "hypothesis",
       "label_column": "label",
-      "label_texts": [" entailment", " neutral", " contradiction"],
+      "label_texts": [" true", " unknown", " false"],
+      "prompt_style": "truth_value",
       "max_train_examples": 4096,
-      "eval_examples": 512
+      "eval_examples": 512,
+      "development_eval_offset": 0,
+      "confirmation_eval_offset": 512,
+      "model_overrides": {
+        "max_length": 256
+      },
+      "experiment_overrides": {
+        "calibration_gradient_examples": 48,
+        "calibration_gate_examples": 96,
+        "monitor_examples": 96,
+        "calibration_sampling": "stratified",
+        "rift_gate_confidence_z": 0.25,
+        "eval_batch_size": 2
+      }
     }
   ],
   "regimes": [

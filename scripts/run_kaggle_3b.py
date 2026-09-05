@@ -151,38 +151,24 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
     calibration_gradient_examples = int(experiment.get("calibration_gradient_examples", 0))
     calibration_gate_examples = int(experiment.get("calibration_gate_examples", 0))
     monitor_examples = int(experiment.get("monitor_examples", 0))
-    shuffled_train = train.shuffle(seed=seed)
     reserved_total = calibration_gradient_examples + calibration_gate_examples + monitor_examples
-    if reserved_total + int(dataset_config["max_train_examples"]) > len(shuffled_train):
+    max_train_examples = int(dataset_config["max_train_examples"])
+    if reserved_total + max_train_examples > len(train):
         raise ValueError("reserved calibration/monitor plus max_train_examples exceeds train data")
-    calibration_gradient = (
-        shuffled_train.select(range(calibration_gradient_examples))
-        if calibration_gradient_examples
-        else None
+    train, calibration_splits = _reserve_calibration_splits(
+        train,
+        label_column=dataset_config["label_column"],
+        split_sizes=(
+            calibration_gradient_examples,
+            calibration_gate_examples,
+            monitor_examples,
+        ),
+        max_train_examples=max_train_examples,
+        seed=seed,
+        stratified=str(experiment.get("calibration_sampling", "random"))
+        == "stratified",
     )
-    calibration_gate = (
-        shuffled_train.select(
-            range(
-                calibration_gradient_examples,
-                calibration_gradient_examples + calibration_gate_examples,
-            )
-        )
-        if calibration_gate_examples
-        else None
-    )
-    monitor = (
-        shuffled_train.select(
-            range(
-                calibration_gradient_examples + calibration_gate_examples,
-                reserved_total,
-            )
-        )
-        if monitor_examples
-        else None
-    )
-    train = shuffled_train.select(
-        range(reserved_total, reserved_total + dataset_config["max_train_examples"])
-    )
+    calibration_gradient, calibration_gate, monitor = calibration_splits
 
     label_column = dataset_config["label_column"]
     partitions = _build_partitions(
@@ -1361,7 +1347,9 @@ def _rift_gate_state(
     }
     selected_scale = 0.0
     selected_delta = 0.0
+    selected_risk_bound = float("inf")
     selected_route = "reject"
+    confidence_z = float(experiment.get("rift_gate_confidence_z", 0.0))
     for route, scale, updates in candidates:
         candidate_state = _aggregate_scaled_updates(
             current_state,
@@ -1384,9 +1372,14 @@ def _rift_gate_state(
             batch_size=batch_size,
             objective=str(experiment.get("calibration_gate_objective", "label_nll")),
         )
-        mean_delta = float((candidate_losses - current_losses).mean().item())
-        if mean_delta <= float(experiment.get("rift_max_mean_increase", 0.0)) and (
-            selected_route == "reject" or mean_delta < selected_delta
+        paired_deltas = candidate_losses - current_losses
+        mean_delta = float(paired_deltas.mean().item())
+        risk_bound = _paired_upper_confidence_bound(
+            paired_deltas,
+            confidence_z=confidence_z,
+        )
+        if risk_bound <= float(experiment.get("rift_max_mean_increase", 0.0)) and (
+            selected_route == "reject" or risk_bound < selected_risk_bound
         ):
             selected_state = candidate_state
             selected_updates = {
@@ -1394,8 +1387,26 @@ def _rift_gate_state(
             }
             selected_scale = scale
             selected_delta = mean_delta
+            selected_risk_bound = risk_bound
             selected_route = route
     return selected_state, selected_updates, selected_scale, selected_delta, selected_route
+
+
+def _paired_upper_confidence_bound(
+    deltas: torch.Tensor,
+    *,
+    confidence_z: float,
+) -> float:
+    if not math.isfinite(confidence_z) or confidence_z < 0.0:
+        raise ValueError("rift_gate_confidence_z must be finite and non-negative")
+    values = deltas.detach().float().flatten()
+    if values.numel() == 0:
+        raise ValueError("paired gate requires at least one loss delta")
+    mean = values.mean()
+    if confidence_z == 0.0 or values.numel() == 1:
+        return float(mean.item())
+    standard_error = values.std(unbiased=True) / math.sqrt(values.numel())
+    return float((mean + confidence_z * standard_error).item())
 
 
 def _whole_update_gate_state(
@@ -1490,7 +1501,11 @@ def _collate_examples(
             "input_ids"
         ]
         prompt_budget = max(1, max_length - len(target_ids))
-        prompt_ids = prompt_ids[:prompt_budget]
+        prompt_ids = _truncate_prompt_ids(
+            prompt_ids,
+            prompt_budget,
+            task=str(dataset_config.get("task", dataset_config.get("subset", ""))),
+        )
         input_ids = (prompt_ids + target_ids)[:max_length]
         labels = [-100] * len(prompt_ids) + target_ids
         labels = labels[: len(input_ids)]
@@ -1547,6 +1562,14 @@ def _prompt_for_example(item: Mapping[str, Any], dataset_config: Mapping[str, An
         )
     if task == "mnli":
         premise_column, hypothesis_column = _mnli_columns(dataset_config)
+        if dataset_config.get("prompt_style") == "truth_value":
+            return (
+                "Determine whether the hypothesis follows from the premise. "
+                "Answer true if entailed, unknown if neutral, or false if "
+                "contradicted.\n"
+                f"Premise: {item[premise_column]}\n"
+                f"Hypothesis: {item[hypothesis_column]}\nAnswer:"
+            )
         return (
             "Classify the relationship between the premise and hypothesis as "
             "entailment, neutral, or contradiction.\n"
@@ -1557,6 +1580,99 @@ def _prompt_for_example(item: Mapping[str, Any], dataset_config: Mapping[str, An
     if template is None:
         raise ValueError(f"unsupported task for prompt construction: {task!r}")
     return str(template).format(**item)
+
+
+def _truncate_prompt_ids(
+    prompt_ids: Sequence[int],
+    budget: int,
+    *,
+    task: str,
+) -> list[int]:
+    if budget <= 0:
+        raise ValueError("prompt token budget must be positive")
+    values = list(prompt_ids)
+    if len(values) <= budget:
+        return values
+    if task.lower() not in {"qnli", "mnli"}:
+        return values[:budget]
+    head = budget // 2
+    tail = budget - head
+    return values[:head] + values[-tail:]
+
+
+def _stratified_segment_indices(
+    labels: Sequence[int],
+    segment_sizes: Sequence[int],
+    *,
+    seed: int,
+) -> tuple[list[list[int]], list[int]]:
+    pools: dict[int, list[int]] = {}
+    for index, label in enumerate(labels):
+        pools.setdefault(int(label), []).append(index)
+    if not pools:
+        raise ValueError("cannot stratify an empty dataset")
+
+    rng = random.Random(seed)
+    ordered_labels = sorted(pools)
+    for pool in pools.values():
+        rng.shuffle(pool)
+    cursors = {label: 0 for label in ordered_labels}
+    selected: set[int] = set()
+    segments: list[list[int]] = []
+    for segment_index, raw_size in enumerate(segment_sizes):
+        size = int(raw_size)
+        if size < 0:
+            raise ValueError("calibration split sizes must be non-negative")
+        base, remainder = divmod(size, len(ordered_labels))
+        quotas = {label: base for label in ordered_labels}
+        for offset in range(remainder):
+            label = ordered_labels[(segment_index + offset) % len(ordered_labels)]
+            quotas[label] += 1
+        segment: list[int] = []
+        for label in ordered_labels:
+            start = cursors[label]
+            end = start + quotas[label]
+            if end > len(pools[label]):
+                raise ValueError(f"not enough label {label} examples for stratified calibration")
+            segment.extend(pools[label][start:end])
+            cursors[label] = end
+        rng.shuffle(segment)
+        selected.update(segment)
+        segments.append(segment)
+
+    remaining = [index for index in range(len(labels)) if index not in selected]
+    rng.shuffle(remaining)
+    return segments, remaining
+
+
+def _reserve_calibration_splits(
+    train,
+    *,
+    label_column: str,
+    split_sizes: Sequence[int],
+    max_train_examples: int,
+    seed: int,
+    stratified: bool,
+):
+    if stratified:
+        segments, remaining = _stratified_segment_indices(
+            list(train[label_column]),
+            split_sizes,
+            seed=seed,
+        )
+        calibration = [train.select(indices) if indices else None for indices in segments]
+        return train.select(remaining[:max_train_examples]), calibration
+
+    shuffled = train.shuffle(seed=seed)
+    calibration = []
+    cursor = 0
+    for raw_size in split_sizes:
+        size = int(raw_size)
+        calibration.append(
+            shuffled.select(range(cursor, cursor + size)) if size else None
+        )
+        cursor += size
+    return shuffled.select(range(cursor, cursor + max_train_examples)), calibration
 
 
 def _example_text_for_details(
@@ -1827,6 +1943,14 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
     ):
         if str(experiment.get(field, "label_nll")) not in {"label_nll", "class_nll"}:
             raise ValueError(f"{field} must be 'label_nll' or 'class_nll'")
+    if str(experiment.get("calibration_sampling", "random")) not in {
+        "random",
+        "stratified",
+    }:
+        raise ValueError("calibration_sampling must be 'random' or 'stratified'")
+    confidence_z = float(experiment.get("rift_gate_confidence_z", 0.0))
+    if not math.isfinite(confidence_z) or confidence_z < 0.0:
+        raise ValueError("rift_gate_confidence_z must be finite and non-negative")
     if method in {"rift", "alignfed_calibration"} and int(
         experiment.get("calibration_gate_examples", 0)
     ) <= 0:

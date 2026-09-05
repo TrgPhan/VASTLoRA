@@ -224,6 +224,65 @@ def test_label_histogram_is_stable_and_string_keyed() -> None:
     }
 
 
+def test_pair_task_truncation_preserves_prompt_head_and_tail() -> None:
+    prompt = list(range(10))
+
+    assert MODULE._truncate_prompt_ids(prompt, 6, task="qnli") == [0, 1, 2, 7, 8, 9]
+    assert MODULE._truncate_prompt_ids(prompt, 6, task="mnli") == [0, 1, 2, 7, 8, 9]
+    assert MODULE._truncate_prompt_ids(prompt, 6, task="sst2") == [0, 1, 2, 3, 4, 5]
+
+
+def test_stratified_calibration_balances_every_reserved_split() -> None:
+    labels = [0] * 20 + [1] * 20 + [2] * 20
+
+    segments, remaining = MODULE._stratified_segment_indices(
+        labels,
+        [6, 9, 12],
+        seed=7,
+    )
+
+    assert [len(segment) for segment in segments] == [6, 9, 12]
+    for segment in segments:
+        counts = MODULE._label_histogram([labels[index] for index in segment])
+        assert max(counts.values()) - min(counts.values()) <= 1
+    flattened = [index for segment in segments for index in segment]
+    assert len(set(flattened)) == len(flattened)
+    assert set(flattened).isdisjoint(remaining)
+    assert len(flattened) + len(remaining) == len(labels)
+
+
+def test_mnli_truth_value_prompt_matches_single_token_verbalizers() -> None:
+    config = {
+        "hub_path": "nyu-mll/glue",
+        "subset": "mnli",
+        "task": "mnli",
+        "premise_column": "premise",
+        "hypothesis_column": "hypothesis",
+        "label_column": "label",
+        "label_texts": [" true", " unknown", " false"],
+        "prompt_style": "truth_value",
+    }
+
+    prompt = MODULE._prompt_for_example(
+        {"premise": "A person reads.", "hypothesis": "Someone reads."},
+        config,
+    )
+
+    assert "true if entailed" in prompt
+    assert "unknown if neutral" in prompt
+    assert "false if contradicted" in prompt
+
+
+def test_paired_upper_confidence_gate_penalizes_uncertain_updates() -> None:
+    deltas = torch.tensor([-0.20, 0.10, -0.10, 0.20])
+
+    mean_only = MODULE._paired_upper_confidence_bound(deltas, confidence_z=0.0)
+    risk_bound = MODULE._paired_upper_confidence_bound(deltas, confidence_z=1.0)
+
+    assert mean_only == 0.0
+    assert risk_bound > mean_only
+
+
 def test_rift_gradient_batch_masks_eos_from_classification_objective() -> None:
     class FakeTokenizer:
         eos_token = "<eos>"

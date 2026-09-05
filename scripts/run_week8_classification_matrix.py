@@ -26,6 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--regime", action="append")
     parser.add_argument("--method", action="append")
     parser.add_argument("--seed", action="append", type=int)
+    parser.add_argument("--eval-offset", type=int)
     parser.add_argument(
         "--output-root",
         type=Path,
@@ -71,6 +72,8 @@ def main() -> None:
             for method in methods:
                 for seed in seeds:
                     config = _build_config(base, task, regime, matrix)
+                    if args.eval_offset is not None:
+                        config["dataset"]["eval_offset"] = args.eval_offset
                     config["provenance"] = {
                         "matrix_name": str(matrix["name"]),
                         "matrix_sha256": matrix_sha256,
@@ -142,13 +145,23 @@ def _build_config(
 ) -> dict[str, Any]:
     config = json.loads(json.dumps(base))
     dataset = config["dataset"]
+    metadata_keys = {
+        "name",
+        "base_config",
+        "output_prefix",
+        "model_overrides",
+        "experiment_overrides",
+        "development_eval_offset",
+        "confirmation_eval_offset",
+    }
     dataset.update(
         {
             key: value
             for key, value in task.items()
-            if key not in {"name", "base_config", "output_prefix"}
+            if key not in metadata_keys
         }
     )
+    config["model"].update(task.get("model_overrides", {}))
     experiment = config["experiment"]
     experiment.update(
         {
@@ -165,6 +178,7 @@ def _build_config(
     )
     if "experiment" in matrix:
         experiment.update(matrix["experiment"])
+    experiment.update(task.get("experiment_overrides", {}))
     # Keep the embedded provenance aligned with the matrix that generated the
     # run; the base competitor config also contains an older task matrix.
     config["task_matrix"] = {

@@ -73,3 +73,70 @@ returns va runner nay van immediate async (`buffer_size=1`). Can chay matrix 3B
 da dong bang tren SST-2/QNLI/MNLI va 6 confirmation seeds. Cac output local tren
 duoc tao trong luc code objective dang la uncommitted worktree, nen chi la pilot;
 official matrix bat buoc ghi clean Git provenance.
+
+## Screening cac task con lai
+
+Ngay chay: 2026-09-05. Day la development screening tren eval offset 0, khong
+phai held-out confirmation.
+
+- Task: QNLI, MNLI-m va MNLI-mm.
+- Moi run: 2 warmup + 8 measured returns, 64 validation examples, seeds
+  3101-3103.
+- Regime: label-shard non-IID, rank `[2, 4, 8, 4]`, compute time
+  `[1, 2, 5, 10]`.
+- MNLI dung prompt truth-value va verbalizer mot token `true/unknown/false`.
+- Calibration gradient/gate/monitor tach roi va lay mau stratified theo label.
+- RIFT dung mean gate tren QNLI va paired upper-confidence gate `z=0.25` tren
+  MNLI. Tham so nay duoc chon tren development, khong duoc tune lai bang
+  confirmation seeds.
+
+### QNLI
+
+| Method | Mean accuracy | Mean class NLL | Harmful | Late harmful | Acceptance | Best accuracy | Best class NLL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| RIFT | 78.65% | 0.458886 | 16.67% | 33.33% | 79.17% | 79.69% | 0.456098 |
+| Spectral filter | 78.65% | 0.457380 | 33.33% | 33.33% | 100.00% | 79.69% | 0.455611 |
+| AlignFed calibration | 78.65% | 0.459272 | 16.67% | 0.00% | 66.67% | 79.69% | 0.455955 |
+| FedRot | 76.04% | 0.467754 | 33.33% | 33.33% | 100.00% | 79.69% | 0.418538 |
+
+RIFT hoa accuracy voi Spectral va AlignFed tren ca 3 seed. So voi Spectral,
+harmful rate thap hon tren 2/3 seed nhung class NLL kem hon rat nho tren 3/3
+seed. So voi AlignFed, RIFT co class NLL tot hon 2/3 seed, nhung AlignFed khong
+co late-harmful event trong screening nay.
+
+### MNLI matched
+
+| Method | Mean accuracy | Mean class NLL | Harmful | Late harmful | Acceptance | Best accuracy | Best class NLL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| RIFT | 67.71% | 0.729945 | 25.00% | 0.00% | 70.83% | 70.31% | 0.717849 |
+| Spectral filter | 67.19% | 0.724801 | 29.17% | 0.00% | 100.00% | 68.75% | 0.714628 |
+| AlignFed calibration | 67.71% | 0.724837 | 37.50% | 33.33% | 79.17% | 70.31% | 0.718841 |
+| FedRot | 64.06% | 0.848227 | 50.00% | 33.33% | 100.00% | 67.19% | 0.742014 |
+
+RIFT thang accuracy so voi Spectral tren 2/3 seed va hoa AlignFed tren 3/3,
+nhung mean class NLL van kem hai control calibration. RIFT co harmful rate
+thap nhat; day la diem Pareto ve safety, khong phai chien thang NLL tuyet doi.
+
+### MNLI mismatched
+
+| Method | Mean accuracy | Mean class NLL | Harmful | Late harmful | Acceptance | Best accuracy | Best class NLL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| RIFT | 76.04% | 0.639211 | 25.00% | 0.00% | 70.83% | 78.13% | 0.610078 |
+| Spectral filter | 76.04% | 0.630478 | 29.17% | 0.00% | 100.00% | 76.56% | 0.607794 |
+| AlignFed calibration | 76.04% | 0.626093 | 37.50% | 33.33% | 79.17% | 76.56% | 0.607539 |
+| FedRot | 65.10% | 0.791774 | 50.00% | 33.33% | 100.00% | 73.44% | 0.649498 |
+
+RIFT hoa mean accuracy voi Spectral va AlignFed, thang FedRot tren ca 3 seed,
+va co harmful rate thap nhat. Class NLL trung binh cua RIFT chua thang Spectral
+hoac AlignFed.
+
+### Dien giai dung muc
+
+Screening nay xac nhan pipeline QNLI/MNLI work va RIFT khong mat loi the
+accuracy khi chuyen task. RIFT co tin hieu on dinh hon FedRot va thuong co it
+harmful update hon Spectral/AlignFed, nhung chua vuot moi doi thu tren NLL.
+
+Moi run chi co mot event dat `staleness >= late_tau`, nen ty le late harmful
+nhay theo tung event va khong du de xac nhan thesis. Claim late-update safety
+chi duoc GO neu matrix 3B voi 92 measured returns, 6 confirmation seed, day du
+client coverage va paired confidence interval vuot gate da dong bang.

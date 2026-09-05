@@ -24,6 +24,47 @@ def test_matrix_fingerprint_is_key_order_invariant() -> None:
     assert MODULE._matrix_fingerprint(left) == MODULE._matrix_fingerprint(right)
 
 
+def test_build_config_applies_task_specific_model_and_experiment_overrides() -> None:
+    base = {
+        "model": {"max_length": 128},
+        "dataset": {"task": "sst2", "eval_offset": 0},
+        "experiment": {"local_learning_rate": 2e-4},
+    }
+    task = {
+        "name": "mnli_m",
+        "base_config": "unused.json",
+        "task": "mnli",
+        "development_eval_offset": 0,
+        "confirmation_eval_offset": 512,
+        "model_overrides": {"max_length": 256},
+        "experiment_overrides": {
+            "local_learning_rate": 1e-4,
+            "calibration_sampling": "stratified",
+        },
+    }
+    regime = {
+        "name": "hard",
+        "client_ranks": [4, 8],
+        "compute_times": [1.0, 4.0],
+        "partition_mode": "label_shard",
+    }
+    matrix = {
+        "methods": ["rift"],
+        "seeds": [1],
+        "runner": {"buffer_size": 1, "schedule_mode": "async"},
+        "tasks": [task],
+        "regimes": [regime],
+    }
+
+    config = MODULE._build_config(base, task, regime, matrix)
+
+    assert config["model"]["max_length"] == 256
+    assert config["dataset"]["task"] == "mnli"
+    assert "confirmation_eval_offset" not in config["dataset"]
+    assert config["experiment"]["local_learning_rate"] == 1e-4
+    assert config["experiment"]["calibration_sampling"] == "stratified"
+
+
 def test_completed_result_must_match_schema_matrix_and_config(tmp_path: Path) -> None:
     MODULE._RUNNER_MODULE = SimpleNamespace(
         _config_fingerprint=lambda config: config["test_fingerprint"]

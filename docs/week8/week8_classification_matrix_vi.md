@@ -29,12 +29,20 @@ Status: infrastructure ready, GPU matrix pending
 - Week 6: competitor wrappers co fidelity labels; khong claim full-faithful cho method thieu protocol.
 - Week 7: buffered trace/group metadata da co, nhung model runner 3B hien tai van immediate async `buffer_size=1`.
 - MNLI-m/mm da duoc implement voi evaluator 3 lop: entailment, neutral, contradiction.
+- MNLI dung truth-value prompt voi verbalizer mot token `true/unknown/false`;
+  zero-shot audit tren Qwen2.5-1.5B cho thay mapping nay on dinh hon verbalizer
+  `entailment/neutral/contradiction` co do dai token khong dong nhat.
 - MNLI dung `validation_matched` va `validation_mismatched` rieng, voi `run_name` rieng de analyzer khong tron hai split.
 - `binary_nll` chi la alias cua `class_nll` voi SST-2/QNLI; MNLI dung
   `class_nll`, Accuracy va multiclass Brier.
   `sequence_nll` va `eos_nll` chi la metric chan doan.
 - Cac config `week4_*` la schema/backbone BERT nho, khong duoc dung lam base cho runner Qwen 3B.
 - Week 8 dung `kaggle_3b_rift_competitors.json` lam base va overlay task/regime bang script matrix.
+- QNLI/MNLI dung head-tail truncation de giu ca hai ve cua pair; cac calibration
+  split dung label-stratified sampling va khong trung voi local-training pool.
+- Development screening tren Qwen2.5-1.5B da chay du QNLI/MNLI-m/MNLI-mm,
+  4 method va 3 seed. Ket qua xac nhan pipeline va Pareto safety signal, nhung
+  chi co mot late event moi run nen khong du de ket luan thesis.
 
 ## Deliverables
 
@@ -96,7 +104,9 @@ Analyzer tu dong quet de quy cac `result.json`, sau do kiem tra paired seed tron
 
 - Tune RIFT chi tren dev seeds/task da khai bao truoc.
 - Notebook dung dev seeds `3101-3103` va output `week8_development` cho
-  `focused`; confirmation seeds `4101-4106` chi duoc dung trong `full` va ghi
+  `focused`; mode nay chay FedEx, Freshness, FedRot, Spectral filter,
+  AlignFed calibration va RIFT tren hard slice. Confirmation seeds
+  `4101-4106` chi duoc dung trong `full` va ghi
   sang `week8_classification_matrix`, nen pilot khong lam ban output cuoi.
 - Chon mot Pareto configuration dua tren late harm, class NLL, accuracy va
   acceptance; khong chon rieng seed co best score.

@@ -1133,20 +1133,30 @@ def _classification_candidate_label_nlls(
         input_ids=batch["input_ids"],
         attention_mask=batch["attention_mask"],
     ).logits
-    shifted_logits = logits[:, :-1, :].float()
+    shifted_logits = logits[:, :-1, :]
     shifted_labels = batch["labels"][:, 1:].to(logits.device)
-    token_loss = F.cross_entropy(
-        shifted_logits.transpose(1, 2),
-        shifted_labels,
-        ignore_index=-100,
-        reduction="none",
-    )
     label_mask = shifted_labels.ne(-100)
     if eos_token_id is not None:
         label_mask &= shifted_labels.ne(eos_token_id)
-    candidate_nll = (
-        (token_loss * label_mask).sum(dim=1) / label_mask.sum(dim=1).clamp_min(1)
+    supervised_positions = label_mask.nonzero(as_tuple=False)
+    if supervised_positions.numel() == 0:
+        raise ValueError("candidate batch has no supervised non-EOS label tokens")
+    candidate_indices = supervised_positions[:, 0]
+    selected_logits = shifted_logits[label_mask].float()
+    selected_labels = shifted_labels[label_mask]
+    selected_loss = F.cross_entropy(
+        selected_logits,
+        selected_labels,
+        reduction="none",
     )
+    candidate_count = shifted_labels.shape[0]
+    loss_sums = selected_loss.new_zeros(candidate_count).scatter_add(
+        0, candidate_indices, selected_loss
+    )
+    label_counts = selected_loss.new_zeros(candidate_count).scatter_add(
+        0, candidate_indices, torch.ones_like(selected_loss)
+    )
+    candidate_nll = loss_sums / label_counts.clamp_min(1)
     num_examples = int(batch["class_labels"].numel())
     if num_examples <= 0 or candidate_nll.numel() % num_examples:
         raise ValueError("candidate batch does not contain a complete label grid")

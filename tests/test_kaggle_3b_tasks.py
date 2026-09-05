@@ -216,6 +216,53 @@ def test_class_nll_objective_compares_all_candidate_labels() -> None:
     assert torch.all(losses < 0.2)
 
 
+def test_candidate_label_nll_sparse_path_matches_dense_loss_and_gradient() -> None:
+    class FakeModel:
+        def __init__(self, logits: torch.Tensor) -> None:
+            self.logits = logits
+
+        def __call__(self, *, input_ids, attention_mask):
+            return SimpleNamespace(logits=self.logits)
+
+    labels = torch.tensor(
+        [
+            [-100, -100, 2, 7],
+            [-100, 3, 7, -100],
+            [-100, -100, -100, 4],
+            [-100, 5, 6, 7],
+        ]
+    )
+    class_labels = torch.tensor([0, 1])
+    batch = {
+        "input_ids": torch.ones_like(labels),
+        "attention_mask": torch.ones_like(labels),
+        "labels": labels,
+        "class_labels": class_labels,
+    }
+    sparse_logits = torch.randn(4, 4, 11, requires_grad=True)
+    sparse = MODULE._classification_candidate_label_nlls(
+        FakeModel(sparse_logits), batch, eos_token_id=7
+    )
+    sparse.sum().backward()
+    sparse_gradient = sparse_logits.grad.detach().clone()
+
+    dense_logits = sparse_logits.detach().clone().requires_grad_(True)
+    shifted_logits = dense_logits[:, :-1, :].float()
+    shifted_labels = labels[:, 1:]
+    token_loss = torch.nn.functional.cross_entropy(
+        shifted_logits.transpose(1, 2),
+        shifted_labels,
+        ignore_index=-100,
+        reduction="none",
+    )
+    mask = shifted_labels.ne(-100) & shifted_labels.ne(7)
+    dense = (token_loss * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1)
+    dense.sum().backward()
+
+    assert torch.allclose(sparse.flatten(), dense)
+    assert torch.allclose(sparse_gradient, dense_logits.grad)
+
+
 def test_label_histogram_is_stable_and_string_keyed() -> None:
     assert MODULE._label_histogram([1, 0, 1, 2, 0, 1]) == {
         "0": 2,

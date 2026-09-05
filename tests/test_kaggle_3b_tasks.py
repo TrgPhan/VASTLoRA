@@ -263,6 +263,37 @@ def test_candidate_label_nll_sparse_path_matches_dense_loss_and_gradient() -> No
     assert torch.allclose(sparse_gradient, dense_logits.grad)
 
 
+def test_supervised_suffix_logits_uses_qwen_style_projection_window() -> None:
+    class SuffixModel:
+        def __init__(self, logits: torch.Tensor) -> None:
+            self.logits = logits
+            self.logits_to_keep = None
+
+        def __call__(self, *, input_ids, attention_mask, logits_to_keep):
+            self.logits_to_keep = logits_to_keep
+            return SimpleNamespace(logits=self.logits[:, -logits_to_keep:, :])
+
+    full_logits = torch.randn(2, 7, 13)
+    labels = torch.tensor(
+        [
+            [-100, -100, -100, -100, 2, 7, -100],
+            [-100, -100, -100, -100, 3, 7, -100],
+        ]
+    )
+    model = SuffixModel(full_logits)
+    batch = {
+        "input_ids": torch.ones_like(labels),
+        "attention_mask": torch.ones_like(labels),
+        "labels": labels,
+    }
+
+    shifted_logits, shifted_labels = MODULE._supervised_suffix_logits(model, batch)
+
+    assert model.logits_to_keep == 4
+    assert torch.equal(shifted_logits, full_logits[:, 3:-1, :].float())
+    assert torch.equal(shifted_labels, labels[:, 4:])
+
+
 def test_label_histogram_is_stable_and_string_keyed() -> None:
     assert MODULE._label_histogram([1, 0, 1, 2, 0, 1]) == {
         "0": 2,

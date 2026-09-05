@@ -833,6 +833,34 @@ def _load_model(config: Mapping[str, Any]):
     return tokenizer, model
 
 
+def _supervised_suffix_logits(
+    model,
+    batch: Mapping[str, torch.Tensor],
+) -> tuple[torch.Tensor, torch.Tensor]:
+    labels = batch["labels"]
+    shifted_mask = labels[:, 1:].ne(-100)
+    supervised_positions = shifted_mask.nonzero(as_tuple=False)
+    if supervised_positions.numel() == 0:
+        raise ValueError("classification batch has no supervised label tokens")
+    first_prediction = int(supervised_positions[:, 1].min().item())
+    logits_to_keep = int(labels.shape[1] - first_prediction)
+    model_inputs = {
+        "input_ids": batch["input_ids"],
+        "attention_mask": batch["attention_mask"],
+    }
+    try:
+        logits = model(**model_inputs, logits_to_keep=logits_to_keep).logits
+    except TypeError as error:
+        if "logits_to_keep" not in str(error):
+            raise
+        logits = model(**model_inputs).logits[:, first_prediction:, :]
+    shifted_logits = logits[:, :-1, :].float()
+    shifted_labels = labels[:, first_prediction + 1 :].to(logits.device)
+    if shifted_logits.shape[:2] != shifted_labels.shape:
+        raise ValueError("suffix logits and classification labels are misaligned")
+    return shifted_logits, shifted_labels
+
+
 def _train_client(
     model,
     tokenizer,
@@ -867,12 +895,7 @@ def _train_client(
                 max_length=max_length,
             )
             batch = _move_batch(batch, _model_input_device(model))
-            outputs = model(
-                input_ids=batch["input_ids"],
-                attention_mask=batch["attention_mask"],
-            )
-            shifted_logits = outputs.logits[:, :-1, :].float()
-            shifted_labels = batch["labels"][:, 1:]
+            shifted_logits, shifted_labels = _supervised_suffix_logits(model, batch)
             token_loss = F.cross_entropy(
                 shifted_logits.transpose(1, 2),
                 shifted_labels,
@@ -938,12 +961,7 @@ def evaluate_classification(
         )
         labels = batch["labels"]
         model_inputs = _move_batch(batch, device)
-        logits = model(
-            input_ids=model_inputs["input_ids"],
-            attention_mask=model_inputs["attention_mask"],
-        ).logits
-        shifted_logits = logits[:, :-1, :].float()
-        shifted_labels = labels[:, 1:].to(logits.device)
+        shifted_logits, shifted_labels = _supervised_suffix_logits(model, model_inputs)
         token_loss = F.cross_entropy(
             shifted_logits.transpose(1, 2),
             shifted_labels,
@@ -1129,12 +1147,7 @@ def _classification_candidate_label_nlls(
     *,
     eos_token_id: int | None,
 ) -> torch.Tensor:
-    logits = model(
-        input_ids=batch["input_ids"],
-        attention_mask=batch["attention_mask"],
-    ).logits
-    shifted_logits = logits[:, :-1, :]
-    shifted_labels = batch["labels"][:, 1:].to(logits.device)
+    shifted_logits, shifted_labels = _supervised_suffix_logits(model, batch)
     label_mask = shifted_labels.ne(-100)
     if eos_token_id is not None:
         label_mask &= shifted_labels.ne(eos_token_id)
@@ -1251,12 +1264,9 @@ def _per_example_classification_losses(
             )
             labels = batch["labels"]
             model_inputs = _move_batch(batch, device)
-            logits = model(
-                input_ids=model_inputs["input_ids"],
-                attention_mask=model_inputs["attention_mask"],
-            ).logits
-            shifted_logits = logits[:, :-1, :].float()
-            shifted_labels = labels[:, 1:].to(logits.device)
+            shifted_logits, shifted_labels = _supervised_suffix_logits(
+                model, model_inputs
+            )
             token_loss = F.cross_entropy(
                 shifted_logits.transpose(1, 2),
                 shifted_labels,

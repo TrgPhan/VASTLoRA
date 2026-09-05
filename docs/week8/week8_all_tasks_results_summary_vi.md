@@ -5,19 +5,50 @@ Ngay tong hop: 2026-09-05
 Tat ca cac dong dung cung backbone `Qwen/Qwen2.5-1.5B-Instruct`. Ten trong
 bang la aggregation/filtering method, khong phai model backbone khac nhau.
 
-Trong moi o, thu tu metric la `Accuracy / class NLL / Harmful / Late harmful`.
-Accuracy cang cao cang tot; ba metric con lai cang thap cang tot.
+## Accuracy
+
+Don vi: phan tram, cang cao cang tot.
 
 | Method | SST-2 | QNLI | MNLI-m | MNLI-mm |
-|---|---|---|---|---|
-| RIFT | **87.50% / 0.321890 / 0.00% / 0.00%** | **78.65% / 0.458886 / 16.67% / 33.33%** | **67.71% / 0.729945 / 25.00% / 0.00%** | **76.04% / 0.639211 / 25.00% / 0.00%** |
-| Spectral filter | **87.50%** / **0.321652** / 4.17% / 0.00% | **78.65%** / **0.457380** / 33.33% / 33.33% | 67.19% / **0.724801** / 29.17% / **0.00%** | **76.04%** / 0.630478 / 29.17% / **0.00%** |
-| AlignFed calibration | **87.50%** / 0.328915 / 6.25% / 8.33% | **78.65%** / 0.459272 / **16.67%** / **0.00%** | **67.71%** / 0.724837 / 37.50% / 33.33% | **76.04%** / **0.626093** / 37.50% / 33.33% |
-| FedRot | 73.61% / 0.559643 / 56.25% / 50.00% | 76.04% / 0.467754 / 33.33% / 33.33% | 64.06% / 0.848227 / 50.00% / 33.33% | 65.10% / 0.791774 / 50.00% / 33.33% |
-| FedEx | 86.81% / 0.339258 / 39.58% / 16.67% | Chua test | Chua test | Chua test |
-| Freshness | 86.81% / 0.345164 / 41.67% / 25.00% | Chua test | Chua test | Chua test |
-| VAST | 86.81% / 0.345806 / 35.42% / 16.67% | Chua test | Chua test | Chua test |
-| MTiP adaptive | 87.15% / 0.352232 / 41.67% / 58.33% | Chua test | Chua test | Chua test |
+|---|---:|---:|---:|---:|
+| RIFT | **87.50%** | **78.65%** | **67.71%** | **76.04%** |
+| Spectral filter | **87.50%** | **78.65%** | 67.19% | **76.04%** |
+| AlignFed calibration | **87.50%** | **78.65%** | **67.71%** | **76.04%** |
+| FedRot | 73.61% | 76.04% | 64.06% | 65.10% |
+| FedEx | 86.81% | - | - | - |
+| Freshness | 86.81% | - | - | - |
+| VAST | 86.81% | - | - | - |
+| MTiP adaptive | 87.15% | - | - | - |
+
+## Class NLL
+
+Cang thap cang tot.
+
+| Method | SST-2 | QNLI | MNLI-m | MNLI-mm |
+|---|---:|---:|---:|---:|
+| RIFT | 0.321890 | 0.458886 | 0.729945 | 0.639211 |
+| Spectral filter | **0.321652** | **0.457380** | **0.724801** | 0.630478 |
+| AlignFed calibration | 0.328915 | 0.459272 | 0.724837 | **0.626093** |
+| FedRot | 0.559643 | 0.467754 | 0.848227 | 0.791774 |
+| FedEx | 0.339258 | - | - | - |
+| Freshness | 0.345164 | - | - | - |
+| VAST | 0.345806 | - | - | - |
+| MTiP adaptive | 0.352232 | - | - | - |
+
+## Harmful Update Rate
+
+Don vi: phan tram measured updates, cang thap cang tot.
+
+| Method | SST-2 | QNLI | MNLI-m | MNLI-mm |
+|---|---:|---:|---:|---:|
+| RIFT | **0.00%** | **16.67%** | **25.00%** | **25.00%** |
+| Spectral filter | 4.17% | 33.33% | 29.17% | 29.17% |
+| AlignFed calibration | 6.25% | **16.67%** | 37.50% | 37.50% |
+| FedRot | 56.25% | 33.33% | 50.00% | 50.00% |
+| FedEx | 39.58% | - | - | - |
+| Freshness | 41.67% | - | - | - |
+| VAST | 35.42% | - | - | - |
+| MTiP adaptive | 41.67% | - | - | - |
 
 ## Protocol
 

@@ -1,5 +1,10 @@
 # Week 8 - Tong hop ket qua Qwen2.5-1.5B
 
+> Luu y integrity: cac cot QNLI/MNLI truoc day goi la held-out dung range
+> 64-159, overlap 32 examples voi development range 0-95. Chung chi con gia tri
+> diagnostic. Confirmation sach thay the duoc khoa tai offset 256 trong
+> `configs/local_1_5b_rift_gainmass_confirmation_matrix.json`.
+
 Ngay cap nhat: 2026-09-06
 
 Tat ca cac dong dung backbone `Qwen/Qwen2.5-1.5B-Instruct`. Ten trong bang

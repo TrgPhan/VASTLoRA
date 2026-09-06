@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 
@@ -359,6 +361,143 @@ def test_paired_upper_confidence_gate_penalizes_uncertain_updates() -> None:
 
     assert mean_only == 0.0
     assert risk_bound > mean_only
+
+
+def test_rift_largest_safe_scale_prefers_filtered_utility() -> None:
+    assert MODULE._prefer_rift_candidate(
+        "largest_safe_scale",
+        route="rank_filtered",
+        scale=0.5,
+        risk_bound=-0.01,
+        selected_route="rank_filtered",
+        selected_scale=0.25,
+        selected_risk_bound=-0.02,
+    )
+    assert not MODULE._prefer_rift_candidate(
+        "largest_safe_scale",
+        route="freshness_fallback",
+        scale=0.9,
+        risk_bound=-0.03,
+        selected_route="rank_filtered",
+        selected_scale=0.25,
+        selected_risk_bound=-0.01,
+    )
+
+
+def test_rift_worst_label_risk_catches_hidden_class_harm() -> None:
+    deltas = torch.tensor([-0.4, -0.2, 0.1, 0.2])
+
+    mean_risk = MODULE._rift_candidate_risk_bound(
+        deltas,
+        confidence_z=0.0,
+        aggregation="mean",
+        labels=None,
+    )
+    worst_label_risk = MODULE._rift_candidate_risk_bound(
+        deltas,
+        confidence_z=0.0,
+        aggregation="worst_label",
+        labels=[0, 0, 1, 1],
+    )
+
+    assert mean_risk < 0.0
+    assert worst_label_risk > 0.0
+
+
+def test_class_margin_focuses_on_strongest_competitor() -> None:
+    candidate_nll = torch.tensor(
+        [[0.2, 0.4, 2.0], [1.5, 0.3, 0.5]], dtype=torch.float32
+    )
+    labels = torch.tensor([0, 2])
+
+    values = MODULE._classification_candidate_margin_values(
+        candidate_nll, labels
+    )
+
+    expected = torch.nn.functional.softplus(torch.tensor([-0.2, 0.2]))
+    assert torch.allclose(values, expected)
+
+
+def test_validate_rejects_negative_minimum_update_gain() -> None:
+    config_path = SCRIPT.parents[1] / "configs" / "local_1_5b_rift_development.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["experiment"]["rift_minimum_update_gain"] = -0.001
+
+    with pytest.raises(ValueError, match="rift_minimum_update_gain"):
+        MODULE._validate_config(config, "rift")
+
+
+def test_validate_rejects_negative_late_minimum_update_gain() -> None:
+    config_path = SCRIPT.parents[1] / "configs" / "local_1_5b_rift_development.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["experiment"]["rift_late_minimum_update_gain"] = -0.001
+
+    with pytest.raises(ValueError, match="rift_late_minimum_update_gain"):
+        MODULE._validate_config(config, "rift")
+
+
+def test_validate_requires_cap_for_late_gain_threshold() -> None:
+    config_path = SCRIPT.parents[1] / "configs" / "local_1_5b_rift_development.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["experiment"]["rift_late_gain_threshold"] = 0.002
+
+    with pytest.raises(ValueError, match="rift_late_low_gain_scale_cap"):
+        MODULE._validate_config(config, "rift")
+
+
+def test_validate_rejects_invalid_rift_component_gain_mass() -> None:
+    config_path = SCRIPT.parents[1] / "configs" / "local_1_5b_rift_development.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["experiment"]["rift_component_gain_mass"] = 1.1
+
+    with pytest.raises(ValueError, match="rift_component_gain_mass"):
+        MODULE._validate_config(config, "rift")
+
+
+def test_validate_late_cap_must_keep_a_scale_candidate() -> None:
+    config_path = SCRIPT.parents[1] / "configs" / "local_1_5b_rift_development.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["experiment"]["rift_late_gain_threshold"] = 0.002
+    config["experiment"]["rift_late_low_gain_scale_cap"] = 0.1
+
+    with pytest.raises(ValueError, match="retain at least one"):
+        MODULE._validate_config(config, "rift")
+
+
+def test_validate_rejects_invalid_gate_min_staleness() -> None:
+    config_path = SCRIPT.parents[1] / "configs" / "local_1_5b_rift_development.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["experiment"]["rift_gate_min_staleness"] = 1.5
+
+    with pytest.raises(ValueError, match="rift_gate_min_staleness"):
+        MODULE._validate_config(config, "rift")
+
+
+def test_validate_rejects_invalid_stale_component_gain_mass() -> None:
+    config_path = SCRIPT.parents[1] / "configs" / "local_1_5b_rift_development.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["experiment"]["rift_stale_component_gain_mass"] = 0.0
+
+    with pytest.raises(ValueError, match="rift_stale_component_gain_mass"):
+        MODULE._validate_config(config, "rift")
+
+
+def test_validate_rejects_invalid_component_pruning_staleness() -> None:
+    config_path = SCRIPT.parents[1] / "configs" / "local_1_5b_rift_development.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["experiment"]["rift_component_pruning_min_staleness"] = -1
+
+    with pytest.raises(ValueError, match="rift_component_pruning_min_staleness"):
+        MODULE._validate_config(config, "rift")
+
+
+def test_validate_rejects_invalid_gate_bypass_relative_gain() -> None:
+    config_path = SCRIPT.parents[1] / "configs" / "local_1_5b_rift_development.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["experiment"]["rift_gate_bypass_minimum_relative_gain"] = 0.0
+
+    with pytest.raises(ValueError, match="rift_gate_bypass_minimum_relative_gain"):
+        MODULE._validate_config(config, "rift")
 
 
 def test_rift_gradient_batch_masks_eos_from_classification_objective() -> None:

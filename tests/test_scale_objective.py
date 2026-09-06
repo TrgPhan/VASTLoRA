@@ -86,3 +86,34 @@ def test_microbatched_component_scores_match_full_batch() -> None:
     assert torch.allclose(actual.scores["layer"], expected.scores["layer"])
     assert actual.calibration_loss == pytest.approx(expected.calibration_loss)
 
+
+def test_filter_retains_global_component_gain_mass() -> None:
+    innovations = {
+        "first": CompactSVD(torch.eye(3), torch.ones(3), torch.eye(3)),
+        "second": CompactSVD(torch.eye(2), torch.ones(2), torch.eye(2)),
+    }
+    scores = {
+        "first": torch.tensor([4.0, 3.0, -1.0]),
+        "second": torch.tensor([2.0, 1.0]),
+    }
+
+    filtered = filter_compact_by_scores(
+        innovations,
+        scores,
+        retained_gain_mass=0.6,
+    )
+
+    assert filtered["first"].rank == 2
+    assert filtered["second"].rank == 0
+
+
+def test_filter_rejects_invalid_gain_mass() -> None:
+    innovation = CompactSVD(torch.eye(1), torch.ones(1), torch.eye(1))
+
+    with pytest.raises(ValueError, match="retained_gain_mass"):
+        filter_compact_by_scores(
+            {"layer": innovation},
+            {"layer": torch.ones(1)},
+            retained_gain_mass=0.0,
+        )
+

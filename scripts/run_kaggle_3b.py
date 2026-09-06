@@ -321,6 +321,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         retained_ranks: list[int] = []
         total_ranks: list[int] = []
         predicted_gains: list[float] = []
+        relative_predicted_gains: list[float] = []
         gate_mean_deltas: list[float] = []
         accepted_routes: list[str] = []
         if accepted_method == "fedrot":
@@ -380,18 +381,51 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                     gradient_batches,
                     loss_fn=component_score_loss_fn,
                 )
+                component_gain_mass = float(
+                    experiment.get(
+                        "spectral_component_gain_mass"
+                        if accepted_method == "spectral_filter"
+                        else "rift_component_gain_mass",
+                        1.0,
+                    )
+                )
+                if (
+                    accepted_method == "rift"
+                    and "rift_stale_component_gain_mass" in experiment
+                    and event.staleness
+                    >= int(
+                        experiment.get(
+                            "rift_component_pruning_min_staleness",
+                            experiment.get("late_tau", 8),
+                        )
+                    )
+                ):
+                    component_gain_mass = float(
+                        experiment["rift_stale_component_gain_mass"]
+                    )
+                minimum_component_gain = float(
+                    experiment.get(
+                        "spectral_minimum_predicted_gain"
+                        if accepted_method == "spectral_filter"
+                        else "rift_minimum_predicted_gain",
+                        0.0,
+                    )
+                )
                 filtered = filter_compact_by_scores(
                     innovations,
                     scores.scores,
-                    minimum_predicted_gain=float(
-                        experiment.get("rift_minimum_predicted_gain", 0.0)
-                    ),
+                    minimum_predicted_gain=minimum_component_gain,
+                    retained_gain_mass=component_gain_mass,
                     keep_nonpositive=False,
                 )
                 selected_rank = sum(update.rank for update in filtered.values())
                 retained_ranks.append(selected_rank)
                 total_ranks.append(scores.total_rank)
                 predicted_gains.append(scores.predicted_gain)
+                relative_predicted_gain = scores.predicted_gain / max(
+                    abs(scores.calibration_loss), 1e-12
+                )
+                relative_predicted_gains.append(relative_predicted_gain)
                 if accepted_method == "spectral_filter":
                     if selected_rank:
                         scale = float(experiment.get("spectral_filter_scale", 1.0))
@@ -410,21 +444,98 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                         accepted_scales.append(0.0)
                         accepted_routes.append("reject")
                 else:
-                    next_state, accepted_updates, scale, mean_delta, route = (
-                        _rift_gate_state(
-                            model,
-                            tokenizer,
+                    minimum_update_gain = float(
+                        experiment.get("rift_minimum_update_gain", 0.0)
+                    )
+                    if event.staleness >= int(experiment.get("late_tau", 8)):
+                        minimum_update_gain = max(
+                            minimum_update_gain,
+                            float(
+                                experiment.get(
+                                    "rift_late_minimum_update_gain", 0.0
+                                )
+                            ),
+                        )
+                    if scores.predicted_gain < minimum_update_gain:
+                        next_state = dict(current_state)
+                        accepted_updates = {
+                            name: scale_compact_update(update, 0.0)
+                            for name, update in innovations.items()
+                        }
+                        scale = 0.0
+                        mean_delta = 0.0
+                        route = "reject_low_predicted_gain"
+                    elif selected_rank > 0 and relative_predicted_gain >= float(
+                        experiment.get(
+                            "rift_gate_bypass_minimum_relative_gain",
+                            float("inf"),
+                        )
+                    ):
+                        scale = 1.0
+                        next_state = _aggregate_scaled_updates(
                             current_state,
                             filtered,
-                            innovations,
-                            calibration_gate,
-                            dataset_config=dataset_config,
-                            max_length=config["model"]["max_length"],
-                            batch_size=experiment["eval_batch_size"],
+                            scale=scale,
                             experiment=experiment,
-                            freshness=freshness,
                         )
-                    )
+                        accepted_updates = {
+                            name: scale_compact_update(update, scale)
+                            for name, update in filtered.items()
+                        }
+                        mean_delta = float("nan")
+                        route = "rank_filtered_high_gain_bypass"
+                    elif selected_rank > 0 and event.staleness < int(
+                        experiment.get("rift_gate_min_staleness", 0)
+                    ):
+                        scale = float(experiment.get("rift_ungated_scale", 1.0))
+                        next_state = _aggregate_scaled_updates(
+                            current_state,
+                            filtered,
+                            scale=scale,
+                            experiment=experiment,
+                        )
+                        accepted_updates = {
+                            name: scale_compact_update(update, scale)
+                            for name, update in filtered.items()
+                        }
+                        mean_delta = float("nan")
+                        route = "rank_filtered_ungated"
+                    else:
+                        gate_experiment = experiment
+                        late_gain_threshold = float(
+                            experiment.get("rift_late_gain_threshold", 0.0)
+                        )
+                        if (
+                            event.staleness >= int(experiment.get("late_tau", 8))
+                            and late_gain_threshold > 0.0
+                            and scores.predicted_gain < late_gain_threshold
+                        ):
+                            scale_cap = float(
+                                experiment["rift_late_low_gain_scale_cap"]
+                            )
+                            gate_experiment = dict(experiment)
+                            gate_experiment["rift_step_scales"] = [
+                                value
+                                for value in experiment.get(
+                                    "rift_step_scales", [1.0, 0.5, 0.25, 0.125]
+                                )
+                                if float(value) <= scale_cap
+                            ]
+                        next_state, accepted_updates, scale, mean_delta, route = (
+                            _rift_gate_state(
+                                model,
+                                tokenizer,
+                                current_state,
+                                filtered,
+                                innovations,
+                                calibration_gate,
+                                dataset_config=dataset_config,
+                                max_length=config["model"]["max_length"],
+                                batch_size=experiment["eval_batch_size"],
+                                experiment=gate_experiment,
+                                freshness=freshness,
+                            )
+                        )
                     accepted_scales.append(scale)
                     gate_mean_deltas.append(mean_delta)
                     accepted_routes.append(route)
@@ -495,7 +606,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                 objective=str(experiment.get("monitor_objective", "label_nll")),
             )
 
-        update_accepted = int(any(route != "reject" for route in accepted_routes))
+        update_accepted = int(any(scale > 0.0 for scale in accepted_scales))
         server_state = _state_to_cpu(next_state)
         snapshots[event.new_server_version] = server_state
         event_rows.append(
@@ -549,6 +660,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                     else 0.0
                 ),
                 "predicted_gain": _mean(predicted_gains),
+                "relative_predicted_gain": _mean(relative_predicted_gains),
                 "gate_mean_delta": _mean(gate_mean_deltas),
                 "route": ";".join(sorted(set(accepted_routes))),
                 "mean_left_rank": _mean(left_ranks),
@@ -623,6 +735,11 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         float(row["predicted_gain"])
         for row in measured_rows
         if math.isfinite(float(row["predicted_gain"]))
+    ]
+    relative_predicted_values = [
+        float(row["relative_predicted_gain"])
+        for row in measured_rows
+        if math.isfinite(float(row["relative_predicted_gain"]))
     ]
     accepted_losses = [float(row["accepted_loss"]) for row in measured_rows]
     best_monitor_offset = (
@@ -715,14 +832,17 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         "utility_per_returned_update": _mean(returned_utilities),
         "cumulative_monitor_utility": sum(returned_utilities),
         "rank_filtered_route_rate": _mean(
-            [route == "rank_filtered" for route in route_values]
+            [route.startswith("rank_filtered") for route in route_values]
         ),
         "freshness_fallback_route_rate": _mean(
             [route == "freshness_fallback" for route in route_values]
         ),
-        "rejection_rate": _mean([route == "reject" for route in route_values]),
+        "rejection_rate": _mean(
+            [route.startswith("reject") for route in route_values]
+        ),
         "mean_retained_fraction": _mean(retained_values),
         "mean_predicted_gain": _mean(predicted_values),
+        "mean_relative_predicted_gain": _mean(relative_predicted_values),
         "best_monitor_label_nll": (
             accepted_losses[best_monitor_offset]
             if best_monitor_offset is not None
@@ -1207,6 +1327,18 @@ def _classification_candidate_nll_loss(
     ).mean()
 
 
+def _classification_candidate_margin_values(
+    candidate_nll: torch.Tensor,
+    class_labels: torch.Tensor,
+) -> torch.Tensor:
+    scores = -candidate_nll
+    labels = class_labels.to(device=scores.device)
+    true_scores = scores.gather(1, labels.unsqueeze(1)).squeeze(1)
+    true_mask = F.one_hot(labels, num_classes=scores.shape[1]).bool()
+    strongest_other = scores.masked_fill(true_mask, -torch.inf).max(dim=1).values
+    return F.softplus(strongest_other - true_scores)
+
+
 def _per_example_classification_losses(
     model,
     tokenizer,
@@ -1224,12 +1356,15 @@ def _per_example_classification_losses(
     device = _model_input_device(model)
     label_column = dataset_config["label_column"]
     examples = [(item, int(item[label_column])) for item in dataset]
-    if objective not in {"label_nll", "class_nll"}:
-        raise ValueError("classification objective must be 'label_nll' or 'class_nll'")
+    if objective not in {"label_nll", "class_nll", "class_margin"}:
+        raise ValueError(
+            "classification objective must be 'label_nll', 'class_nll', or "
+            "'class_margin'"
+        )
     with torch.inference_mode():
         for start in range(0, len(examples), batch_size):
             group = examples[start : start + batch_size]
-            if objective == "class_nll":
+            if objective in {"class_nll", "class_margin"}:
                 candidates = [
                     (item, candidate)
                     for item, _ in group
@@ -1246,15 +1381,23 @@ def _per_example_classification_losses(
                     dtype=torch.long,
                 )
                 model_inputs = _move_batch(batch, device)
-                values.append(
-                    _classification_candidate_nll_values(
+                if objective == "class_nll":
+                    batch_values = _classification_candidate_nll_values(
                         model,
                         model_inputs,
                         eos_token_id=tokenizer.eos_token_id,
                     )
-                    .detach()
-                    .cpu()
-                )
+                else:
+                    candidate_nll = _classification_candidate_label_nlls(
+                        model,
+                        model_inputs,
+                        eos_token_id=tokenizer.eos_token_id,
+                    )
+                    batch_values = _classification_candidate_margin_values(
+                        candidate_nll,
+                        model_inputs["class_labels"],
+                    )
+                values.append(batch_values.detach().cpu())
                 continue
             batch = _collate_examples(
                 tokenizer,
@@ -1370,6 +1513,13 @@ def _rift_gate_state(
     selected_risk_bound = float("inf")
     selected_route = "reject"
     confidence_z = float(experiment.get("rift_gate_confidence_z", 0.0))
+    gate_selection = str(experiment.get("rift_gate_selection", "min_risk"))
+    risk_aggregation = str(experiment.get("rift_gate_risk_aggregation", "mean"))
+    gate_labels = (
+        [int(value) for value in calibration_gate[dataset_config["label_column"]]]
+        if risk_aggregation == "worst_label"
+        else None
+    )
     for route, scale, updates in candidates:
         candidate_state = _aggregate_scaled_updates(
             current_state,
@@ -1394,12 +1544,23 @@ def _rift_gate_state(
         )
         paired_deltas = candidate_losses - current_losses
         mean_delta = float(paired_deltas.mean().item())
-        risk_bound = _paired_upper_confidence_bound(
+        risk_bound = _rift_candidate_risk_bound(
             paired_deltas,
             confidence_z=confidence_z,
+            aggregation=risk_aggregation,
+            labels=gate_labels,
         )
         if risk_bound <= float(experiment.get("rift_max_mean_increase", 0.0)) and (
-            selected_route == "reject" or risk_bound < selected_risk_bound
+            selected_route == "reject"
+            or _prefer_rift_candidate(
+                gate_selection,
+                route=route,
+                scale=scale,
+                risk_bound=risk_bound,
+                selected_route=selected_route,
+                selected_scale=selected_scale,
+                selected_risk_bound=selected_risk_bound,
+            )
         ):
             selected_state = candidate_state
             selected_updates = {
@@ -1410,6 +1571,63 @@ def _rift_gate_state(
             selected_risk_bound = risk_bound
             selected_route = route
     return selected_state, selected_updates, selected_scale, selected_delta, selected_route
+
+
+def _rift_candidate_risk_bound(
+    deltas: torch.Tensor,
+    *,
+    confidence_z: float,
+    aggregation: str,
+    labels: list[int] | None,
+) -> float:
+    if aggregation == "mean":
+        return _paired_upper_confidence_bound(deltas, confidence_z=confidence_z)
+    if aggregation == "worst_label":
+        if labels is None or len(labels) != deltas.numel():
+            raise ValueError("worst_label risk requires one label per gate example")
+        flattened = deltas.flatten()
+        bounds = [
+            _paired_upper_confidence_bound(
+                flattened[
+                    torch.tensor(
+                        [value == label for value in labels],
+                        dtype=torch.bool,
+                        device=flattened.device,
+                    )
+                ],
+                confidence_z=confidence_z,
+            )
+            for label in sorted(set(labels))
+        ]
+        return max(bounds)
+    raise ValueError("rift_gate_risk_aggregation must be 'mean' or 'worst_label'")
+
+
+def _prefer_rift_candidate(
+    selection: str,
+    *,
+    route: str,
+    scale: float,
+    risk_bound: float,
+    selected_route: str,
+    selected_scale: float,
+    selected_risk_bound: float,
+) -> bool:
+    if selection == "min_risk":
+        return risk_bound < selected_risk_bound
+    if selection == "largest_safe_scale":
+        # The filtered route defines RIFT. Only fall back to the raw update
+        # when no filtered candidate satisfies the safety constraint.
+        route_priority = route == "rank_filtered"
+        selected_priority = selected_route == "rank_filtered"
+        if route_priority != selected_priority:
+            return route_priority
+        if scale != selected_scale:
+            return scale > selected_scale
+        return risk_bound < selected_risk_bound
+    raise ValueError(
+        "rift_gate_selection must be 'min_risk' or 'largest_safe_scale'"
+    )
 
 
 def _paired_upper_confidence_bound(
@@ -1956,13 +2174,22 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
         raise ValueError(f"{method} requires calibration_gradient_examples > 0")
     if int(experiment.get("calibration_gradient_batch_size", 1)) <= 0:
         raise ValueError("calibration_gradient_batch_size must be positive")
-    for field in (
-        "component_score_objective",
-        "calibration_gate_objective",
-        "monitor_objective",
-    ):
-        if str(experiment.get(field, "label_nll")) not in {"label_nll", "class_nll"}:
-            raise ValueError(f"{field} must be 'label_nll' or 'class_nll'")
+    if str(experiment.get("component_score_objective", "label_nll")) not in {
+        "label_nll",
+        "class_nll",
+    }:
+        raise ValueError(
+            "component_score_objective must be 'label_nll' or 'class_nll'"
+        )
+    for field in ("calibration_gate_objective", "monitor_objective"):
+        if str(experiment.get(field, "label_nll")) not in {
+            "label_nll",
+            "class_nll",
+            "class_margin",
+        }:
+            raise ValueError(
+                f"{field} must be 'label_nll', 'class_nll', or 'class_margin'"
+            )
     if str(experiment.get("calibration_sampling", "random")) not in {
         "random",
         "stratified",
@@ -1971,6 +2198,99 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
     confidence_z = float(experiment.get("rift_gate_confidence_z", 0.0))
     if not math.isfinite(confidence_z) or confidence_z < 0.0:
         raise ValueError("rift_gate_confidence_z must be finite and non-negative")
+    if str(experiment.get("rift_gate_selection", "min_risk")) not in {
+        "min_risk",
+        "largest_safe_scale",
+    }:
+        raise ValueError(
+            "rift_gate_selection must be 'min_risk' or 'largest_safe_scale'"
+        )
+    if str(experiment.get("rift_gate_risk_aggregation", "mean")) not in {
+        "mean",
+        "worst_label",
+    }:
+        raise ValueError(
+            "rift_gate_risk_aggregation must be 'mean' or 'worst_label'"
+        )
+    minimum_update_gain = float(experiment.get("rift_minimum_update_gain", 0.0))
+    if not math.isfinite(minimum_update_gain) or minimum_update_gain < 0.0:
+        raise ValueError("rift_minimum_update_gain must be finite and non-negative")
+    late_minimum_update_gain = float(
+        experiment.get("rift_late_minimum_update_gain", 0.0)
+    )
+    if not math.isfinite(late_minimum_update_gain) or late_minimum_update_gain < 0.0:
+        raise ValueError(
+            "rift_late_minimum_update_gain must be finite and non-negative"
+        )
+    late_gain_threshold = float(experiment.get("rift_late_gain_threshold", 0.0))
+    if not math.isfinite(late_gain_threshold) or late_gain_threshold < 0.0:
+        raise ValueError("rift_late_gain_threshold must be finite and non-negative")
+    if late_gain_threshold > 0.0:
+        late_scale_cap = float(experiment.get("rift_late_low_gain_scale_cap", 0.0))
+        if not math.isfinite(late_scale_cap) or not 0.0 < late_scale_cap <= 1.0:
+            raise ValueError(
+                "rift_late_low_gain_scale_cap must be in (0, 1] when "
+                "rift_late_gain_threshold is enabled"
+            )
+        configured_scales = [
+            float(value)
+            for value in experiment.get(
+                "rift_step_scales", [1.0, 0.5, 0.25, 0.125]
+            )
+        ]
+        if not any(value <= late_scale_cap for value in configured_scales):
+            raise ValueError(
+                "rift_late_low_gain_scale_cap must retain at least one "
+                "rift_step_scales candidate"
+            )
+    for field in (
+        "rift_component_gain_mass",
+        "rift_stale_component_gain_mass",
+        "spectral_component_gain_mass",
+    ):
+        gain_mass = float(experiment.get(field, 1.0))
+        if not math.isfinite(gain_mass) or not 0.0 < gain_mass <= 1.0:
+            raise ValueError(f"{field} must be in (0, 1]")
+    for field in (
+        "rift_minimum_predicted_gain",
+        "spectral_minimum_predicted_gain",
+    ):
+        component_gain = float(experiment.get(field, 0.0))
+        if not math.isfinite(component_gain) or component_gain < 0.0:
+            raise ValueError(f"{field} must be finite and non-negative")
+    gate_min_staleness = experiment.get("rift_gate_min_staleness", 0)
+    if isinstance(gate_min_staleness, bool) or not isinstance(
+        gate_min_staleness, int
+    ):
+        raise ValueError("rift_gate_min_staleness must be a non-negative integer")
+    if gate_min_staleness < 0:
+        raise ValueError("rift_gate_min_staleness must be a non-negative integer")
+    pruning_min_staleness = experiment.get(
+        "rift_component_pruning_min_staleness",
+        experiment.get("late_tau", 8),
+    )
+    if isinstance(pruning_min_staleness, bool) or not isinstance(
+        pruning_min_staleness, int
+    ):
+        raise ValueError(
+            "rift_component_pruning_min_staleness must be a non-negative integer"
+        )
+    if pruning_min_staleness < 0:
+        raise ValueError(
+            "rift_component_pruning_min_staleness must be a non-negative integer"
+        )
+    ungated_scale = float(experiment.get("rift_ungated_scale", 1.0))
+    if not math.isfinite(ungated_scale) or not 0.0 < ungated_scale <= 1.0:
+        raise ValueError("rift_ungated_scale must be in (0, 1]")
+    bypass_relative_gain = float(
+        experiment.get("rift_gate_bypass_minimum_relative_gain", float("inf"))
+    )
+    if bypass_relative_gain != float("inf") and (
+        not math.isfinite(bypass_relative_gain) or bypass_relative_gain <= 0.0
+    ):
+        raise ValueError(
+            "rift_gate_bypass_minimum_relative_gain must be finite and positive"
+        )
     if method in {"rift", "alignfed_calibration"} and int(
         experiment.get("calibration_gate_examples", 0)
     ) <= 0:

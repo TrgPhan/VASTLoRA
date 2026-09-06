@@ -65,6 +65,41 @@ def test_build_config_applies_task_specific_model_and_experiment_overrides() -> 
     assert config["experiment"]["calibration_sampling"] == "stratified"
 
 
+def test_build_config_applies_regime_experiment_overrides_last() -> None:
+    base = {
+        "model": {},
+        "dataset": {"task": "sst2", "eval_offset": 0},
+        "experiment": {"rift_gate_confidence_z": 0.0},
+    }
+    task = {
+        "name": "sst2",
+        "base_config": "unused.json",
+        "experiment_overrides": {"rift_gate_confidence_z": 0.25},
+    }
+    regime = {
+        "name": "largest_safe",
+        "client_ranks": [2, 4],
+        "compute_times": [1.0, 2.0],
+        "partition_mode": "label_shard",
+        "experiment_overrides": {
+            "rift_gate_confidence_z": 0.0,
+            "rift_gate_selection": "largest_safe_scale",
+        },
+    }
+    matrix = {
+        "methods": ["rift"],
+        "seeds": [1],
+        "runner": {"buffer_size": 1, "schedule_mode": "async"},
+        "tasks": [task],
+        "regimes": [regime],
+    }
+
+    config = MODULE._build_config(base, task, regime, matrix)
+
+    assert config["experiment"]["rift_gate_confidence_z"] == 0.0
+    assert config["experiment"]["rift_gate_selection"] == "largest_safe_scale"
+
+
 def test_completed_result_must_match_schema_matrix_and_config(tmp_path: Path) -> None:
     MODULE._RUNNER_MODULE = SimpleNamespace(
         _config_fingerprint=lambda config: config["test_fingerprint"]

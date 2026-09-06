@@ -13,7 +13,14 @@
     "calibration_gradient_batch_size": 2,
     "component_score_objective": "class_nll",
     "calibration_gate_objective": "class_nll",
-    "monitor_objective": "class_nll"
+    "monitor_objective": "class_nll",
+    "rift_stale_component_gain_mass": 0.9,
+    "rift_component_pruning_min_staleness": 8,
+    "rift_gate_selection": "largest_safe_scale",
+    "rift_gate_min_staleness": 8,
+    "rift_gate_confidence_z": 0.25,
+    "rift_gate_bypass_minimum_relative_gain": 0.01,
+    "rift_max_mean_increase": 0.0
   },
   "tasks": [
     {

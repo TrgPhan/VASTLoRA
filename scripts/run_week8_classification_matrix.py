@@ -179,6 +179,7 @@ def _build_config(
     if "experiment" in matrix:
         experiment.update(matrix["experiment"])
     experiment.update(task.get("experiment_overrides", {}))
+    experiment.update(regime.get("experiment_overrides", {}))
     # Keep the embedded provenance aligned with the matrix that generated the
     # run; the base competitor config also contains an older task matrix.
     config["task_matrix"] = {

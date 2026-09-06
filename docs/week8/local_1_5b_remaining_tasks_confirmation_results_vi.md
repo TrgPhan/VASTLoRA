@@ -1,4 +1,10 @@
-# Week 8 - Held-out confirmation QNLI va MNLI
+# Week 8 - QNLI va MNLI confirmation (retired diagnostic)
+
+> Integrity correction: cac run trong bao cao nay dung `eval_offset=64` voi
+> 96 examples, trong khi development dung range 0-95. Hai range overlap 32
+> examples, nen ket qua duoi day khong con duoc xem la independent held-out
+> evidence. Bao cao duoc giu lai de truy vet; confirmation thay the dung offset
+> 256 trong `configs/local_1_5b_rift_gainmass_confirmation_matrix.json`.
 
 Ngay hoan tat: 2026-09-06
 

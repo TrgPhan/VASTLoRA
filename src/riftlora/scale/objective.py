@@ -157,22 +157,60 @@ def filter_compact_by_scores(
     scores: Mapping[str, torch.Tensor],
     *,
     minimum_predicted_gain: float = 0.0,
+    retained_gain_mass: float = 1.0,
     keep_nonpositive: bool = False,
 ) -> dict[str, CompactSVD]:
     if set(innovations) != set(scores):
         raise ValueError("innovations and scores must have the same keys")
     if minimum_predicted_gain < 0.0:
         raise ValueError("minimum_predicted_gain must be non-negative")
+    if (
+        not math.isfinite(retained_gain_mass)
+        or not 0.0 < retained_gain_mass <= 1.0
+    ):
+        raise ValueError("retained_gain_mass must be in (0, 1]")
+
+    eligible: list[tuple[float, str, int]] = []
+    for name, compact in innovations.items():
+        layer_scores = scores[name].detach().float().flatten()
+        if layer_scores.numel() != compact.rank:
+            raise ValueError(f"score rank mismatch for {name}")
+        if not torch.isfinite(layer_scores).all():
+            raise ValueError(f"component scores must be finite for {name}")
+        eligible.extend(
+            (float(value), name, index)
+            for index, value in enumerate(layer_scores.tolist())
+            if value > minimum_predicted_gain
+        )
+
+    keep_indices: dict[str, set[int]] = {name: set() for name in innovations}
+    if keep_nonpositive:
+        keep_indices = {
+            name: set(range(compact.rank)) for name, compact in innovations.items()
+        }
+    elif retained_gain_mass == 1.0:
+        for _, name, index in eligible:
+            keep_indices[name].add(index)
+    elif eligible:
+        eligible.sort(key=lambda item: (-item[0], item[1], item[2]))
+        target_gain = sum(item[0] for item in eligible) * retained_gain_mass
+        retained_gain = 0.0
+        for gain, name, index in eligible:
+            keep_indices[name].add(index)
+            retained_gain += gain
+            if retained_gain >= target_gain:
+                break
 
     filtered: dict[str, CompactSVD] = {}
     for name, compact in innovations.items():
-        layer_scores = scores[name].to(device=compact.s.device)
-        if layer_scores.numel() != compact.rank:
-            raise ValueError(f"score rank mismatch for {name}")
-        keep = layer_scores > minimum_predicted_gain
-        if keep_nonpositive:
-            keep = torch.ones_like(keep, dtype=torch.bool)
-        filtered[name] = CompactSVD(compact.u[:, keep], compact.s[keep], compact.v[:, keep])
+        keep = torch.tensor(
+            [index in keep_indices[name] for index in range(compact.rank)],
+            dtype=torch.bool,
+            device=compact.s.device,
+        )
+        filtered[name] = CompactSVD(
+            compact.u[:, keep], compact.s[keep], compact.v[:, keep]
+        )
     return filtered
 
 

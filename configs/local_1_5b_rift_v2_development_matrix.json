@@ -1,0 +1,123 @@
+{
+  "name": "riftlora-local-1.5b-v2-development-offset512",
+  "required_schema_version": 4,
+  "runner": {
+    "script": "scripts/run_kaggle_3b.py",
+    "buffer_size": 1,
+    "schedule_mode": "async"
+  },
+  "experiment": {
+    "warmup_returns": 4,
+    "collected_returns": 16,
+    "calibration_sampling": "stratified",
+    "component_score_objective": "class_nll",
+    "calibration_gate_objective": "class_nll",
+    "monitor_objective": "class_nll",
+    "rift_stale_component_gain_mass": 0.9,
+    "rift_component_pruning_min_staleness": 4,
+    "rift_gate_selection": "largest_safe_scale",
+    "rift_gate_min_staleness": 4,
+    "rift_max_mean_increase": 0.0,
+    "rift_step_scales": [1.0, 0.75, 0.5, 0.25, 0.125],
+    "rift_include_freshness_fallback": true,
+    "eval_batch_size": 1
+  },
+  "tasks": [
+    {
+      "name": "qnli",
+      "base_config": "configs/local_1_5b_rift_development.json",
+      "subset": "qnli",
+      "task": "qnli",
+      "validation_split": "validation",
+      "question_column": "question",
+      "sentence_column": "sentence",
+      "label_column": "label",
+      "label_texts": [" yes", " no"],
+      "max_train_examples": 512,
+      "eval_examples": 96,
+      "eval_offset": 512,
+      "model_overrides": {"max_length": 128},
+      "experiment_overrides": {
+        "calibration_gradient_examples": 8,
+        "calibration_gate_examples": 24,
+        "monitor_examples": 24
+      }
+    },
+    {
+      "name": "mnli_m",
+      "run_name": "mnli_m",
+      "base_config": "configs/local_1_5b_rift_development.json",
+      "subset": "mnli",
+      "task": "mnli",
+      "validation_split": "validation_matched",
+      "premise_column": "premise",
+      "hypothesis_column": "hypothesis",
+      "label_column": "label",
+      "label_texts": [" true", " unknown", " false"],
+      "prompt_style": "truth_value",
+      "max_train_examples": 512,
+      "eval_examples": 96,
+      "eval_offset": 512,
+      "model_overrides": {"max_length": 192},
+      "experiment_overrides": {
+        "calibration_gradient_examples": 9,
+        "calibration_gate_examples": 24,
+        "monitor_examples": 24
+      }
+    },
+    {
+      "name": "mnli_mm",
+      "run_name": "mnli_mm",
+      "base_config": "configs/local_1_5b_rift_development.json",
+      "subset": "mnli",
+      "task": "mnli",
+      "validation_split": "validation_mismatched",
+      "premise_column": "premise",
+      "hypothesis_column": "hypothesis",
+      "label_column": "label",
+      "label_texts": [" true", " unknown", " false"],
+      "prompt_style": "truth_value",
+      "max_train_examples": 512,
+      "eval_examples": 96,
+      "eval_offset": 512,
+      "model_overrides": {"max_length": 192},
+      "experiment_overrides": {
+        "calibration_gradient_examples": 9,
+        "calibration_gate_examples": 24,
+        "monitor_examples": 24
+      }
+    }
+  ],
+  "regimes": [
+    {
+      "name": "v1_largecal_bypass",
+      "partition_mode": "label_shard",
+      "client_ranks": [2, 4, 8, 4],
+      "compute_times": [1.0, 2.0, 5.0, 10.0],
+      "experiment_overrides": {
+        "rift_gate_confidence_z": 0.25,
+        "rift_gate_bypass_minimum_relative_gain": 0.01
+      }
+    },
+    {
+      "name": "v2_largecal_gatefirst_z0",
+      "partition_mode": "label_shard",
+      "client_ranks": [2, 4, 8, 4],
+      "compute_times": [1.0, 2.0, 5.0, 10.0],
+      "experiment_overrides": {
+        "rift_gate_confidence_z": 0.0
+      }
+    },
+    {
+      "name": "v2_largecal_gatefirst_z025",
+      "partition_mode": "label_shard",
+      "client_ranks": [2, 4, 8, 4],
+      "compute_times": [1.0, 2.0, 5.0, 10.0],
+      "experiment_overrides": {
+        "rift_gate_confidence_z": 0.25
+      }
+    }
+  ],
+  "methods": ["rift"],
+  "seeds": [4101, 4102, 4103]
+}

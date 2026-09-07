@@ -509,27 +509,49 @@ def test_rejected_high_gain_rescue_only_applies_to_eligible_rejections() -> None
     assert MODULE._rift_rejected_high_gain_rescue_scale(
         route="reject",
         selected_rank=3,
+        staleness=4,
         relative_predicted_gain=0.02,
         experiment=experiment,
     ) == pytest.approx(0.25)
     assert MODULE._rift_rejected_high_gain_rescue_scale(
         route="reject",
         selected_rank=3,
+        staleness=4,
         relative_predicted_gain=0.005,
         experiment=experiment,
     ) is None
     assert MODULE._rift_rejected_high_gain_rescue_scale(
         route="rank_filtered",
         selected_rank=3,
+        staleness=4,
         relative_predicted_gain=0.02,
         experiment=experiment,
     ) is None
     assert MODULE._rift_rejected_high_gain_rescue_scale(
         route="reject",
         selected_rank=0,
+        staleness=4,
         relative_predicted_gain=0.02,
         experiment=experiment,
     ) is None
+
+
+def test_rejected_high_gain_rescue_scales_inverse_to_staleness() -> None:
+    experiment = {
+        "rift_rejected_high_gain_rescue_minimum_relative_gain": 0.01,
+        "rift_rejected_high_gain_rescue_staleness_budget": 2.0,
+        "rift_rejected_high_gain_rescue_max_scale": 0.5,
+        "rift_step_scales": [1.0, 0.75, 0.5, 0.25, 0.125],
+    }
+
+    for staleness, expected in ((4, 0.5), (8, 0.25), (14, 0.125)):
+        assert MODULE._rift_rejected_high_gain_rescue_scale(
+            route="reject",
+            selected_rank=3,
+            staleness=staleness,
+            relative_predicted_gain=0.02,
+            experiment=experiment,
+        ) == pytest.approx(expected)
 
 
 def test_validate_requires_valid_rejected_high_gain_rescue_scale() -> None:

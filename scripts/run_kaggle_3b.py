@@ -539,6 +539,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                         rescue_scale = _rift_rejected_high_gain_rescue_scale(
                             route=route,
                             selected_rank=selected_rank,
+                            staleness=event.staleness,
                             relative_predicted_gain=relative_predicted_gain,
                             experiment=experiment,
                         )
@@ -1627,6 +1628,7 @@ def _rift_rejected_high_gain_rescue_scale(
     *,
     route: str,
     selected_rank: int,
+    staleness: int,
     relative_predicted_gain: float,
     experiment: Mapping[str, Any],
 ) -> float | None:
@@ -1637,7 +1639,27 @@ def _rift_rejected_high_gain_rescue_scale(
         return None
     if relative_predicted_gain < float(threshold):
         return None
-    return float(experiment["rift_rejected_high_gain_rescue_scale"])
+    if "rift_rejected_high_gain_rescue_staleness_budget" not in experiment:
+        return float(experiment["rift_rejected_high_gain_rescue_scale"])
+
+    budget = float(experiment["rift_rejected_high_gain_rescue_staleness_budget"])
+    max_scale = float(
+        experiment.get("rift_rejected_high_gain_rescue_max_scale", 1.0)
+    )
+    target_scale = min(max_scale, budget / max(staleness, 1))
+    configured_scales = sorted(
+        {
+            float(value)
+            for value in experiment.get(
+                "rift_step_scales", [1.0, 0.5, 0.25, 0.125]
+            )
+        },
+        reverse=True,
+    )
+    return next(
+        (scale for scale in configured_scales if scale <= target_scale),
+        None,
+    )
 
 
 def _prefer_rift_candidate(
@@ -2338,14 +2360,44 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
                 "rift_rejected_high_gain_rescue_minimum_relative_gain must be "
                 "finite and positive"
             )
-        rescue_scale = float(
-            experiment.get("rift_rejected_high_gain_rescue_scale", 0.0)
+        has_fixed_scale = "rift_rejected_high_gain_rescue_scale" in experiment
+        has_staleness_budget = (
+            "rift_rejected_high_gain_rescue_staleness_budget" in experiment
         )
-        if not math.isfinite(rescue_scale) or not 0.0 < rescue_scale <= 1.0:
+        if has_fixed_scale == has_staleness_budget:
             raise ValueError(
-                "rift_rejected_high_gain_rescue_scale must be in (0, 1] when "
-                "rejected high-gain rescue is enabled"
+                "rejected high-gain rescue requires exactly one of "
+                "rift_rejected_high_gain_rescue_scale or "
+                "rift_rejected_high_gain_rescue_staleness_budget"
             )
+        if has_fixed_scale:
+            rescue_scale = float(
+                experiment["rift_rejected_high_gain_rescue_scale"]
+            )
+            if not math.isfinite(rescue_scale) or not 0.0 < rescue_scale <= 1.0:
+                raise ValueError(
+                    "rift_rejected_high_gain_rescue_scale must be in (0, 1] "
+                    "when rejected high-gain rescue is enabled"
+                )
+        else:
+            rescue_budget = float(
+                experiment["rift_rejected_high_gain_rescue_staleness_budget"]
+            )
+            if not math.isfinite(rescue_budget) or rescue_budget <= 0.0:
+                raise ValueError(
+                    "rift_rejected_high_gain_rescue_staleness_budget must be "
+                    "finite and positive"
+                )
+            rescue_max_scale = float(
+                experiment.get("rift_rejected_high_gain_rescue_max_scale", 1.0)
+            )
+            if (
+                not math.isfinite(rescue_max_scale)
+                or not 0.0 < rescue_max_scale <= 1.0
+            ):
+                raise ValueError(
+                    "rift_rejected_high_gain_rescue_max_scale must be in (0, 1]"
+                )
     if method in {"rift", "alignfed_calibration"} and int(
         experiment.get("calibration_gate_examples", 0)
     ) <= 0:

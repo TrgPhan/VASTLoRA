@@ -536,6 +536,26 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                                 freshness=freshness,
                             )
                         )
+                        rescue_scale = _rift_rejected_high_gain_rescue_scale(
+                            route=route,
+                            selected_rank=selected_rank,
+                            relative_predicted_gain=relative_predicted_gain,
+                            experiment=experiment,
+                        )
+                        if rescue_scale is not None:
+                            scale = rescue_scale
+                            next_state = _aggregate_scaled_updates(
+                                current_state,
+                                filtered,
+                                scale=scale,
+                                experiment=experiment,
+                            )
+                            accepted_updates = {
+                                name: scale_compact_update(update, scale)
+                                for name, update in filtered.items()
+                            }
+                            mean_delta = float("nan")
+                            route = "rank_filtered_high_gain_rescue"
                     accepted_scales.append(scale)
                     gate_mean_deltas.append(mean_delta)
                     accepted_routes.append(route)
@@ -1603,6 +1623,23 @@ def _rift_candidate_risk_bound(
     raise ValueError("rift_gate_risk_aggregation must be 'mean' or 'worst_label'")
 
 
+def _rift_rejected_high_gain_rescue_scale(
+    *,
+    route: str,
+    selected_rank: int,
+    relative_predicted_gain: float,
+    experiment: Mapping[str, Any],
+) -> float | None:
+    threshold = experiment.get(
+        "rift_rejected_high_gain_rescue_minimum_relative_gain"
+    )
+    if threshold is None or not route.startswith("reject") or selected_rank <= 0:
+        return None
+    if relative_predicted_gain < float(threshold):
+        return None
+    return float(experiment["rift_rejected_high_gain_rescue_scale"])
+
+
 def _prefer_rift_candidate(
     selection: str,
     *,
@@ -2291,6 +2328,24 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
         raise ValueError(
             "rift_gate_bypass_minimum_relative_gain must be finite and positive"
         )
+    rescue_relative_gain = experiment.get(
+        "rift_rejected_high_gain_rescue_minimum_relative_gain"
+    )
+    if rescue_relative_gain is not None:
+        rescue_relative_gain = float(rescue_relative_gain)
+        if not math.isfinite(rescue_relative_gain) or rescue_relative_gain <= 0.0:
+            raise ValueError(
+                "rift_rejected_high_gain_rescue_minimum_relative_gain must be "
+                "finite and positive"
+            )
+        rescue_scale = float(
+            experiment.get("rift_rejected_high_gain_rescue_scale", 0.0)
+        )
+        if not math.isfinite(rescue_scale) or not 0.0 < rescue_scale <= 1.0:
+            raise ValueError(
+                "rift_rejected_high_gain_rescue_scale must be in (0, 1] when "
+                "rejected high-gain rescue is enabled"
+            )
     if method in {"rift", "alignfed_calibration"} and int(
         experiment.get("calibration_gate_examples", 0)
     ) <= 0:

@@ -500,6 +500,50 @@ def test_validate_rejects_invalid_gate_bypass_relative_gain() -> None:
         MODULE._validate_config(config, "rift")
 
 
+def test_rejected_high_gain_rescue_only_applies_to_eligible_rejections() -> None:
+    experiment = {
+        "rift_rejected_high_gain_rescue_minimum_relative_gain": 0.01,
+        "rift_rejected_high_gain_rescue_scale": 0.25,
+    }
+
+    assert MODULE._rift_rejected_high_gain_rescue_scale(
+        route="reject",
+        selected_rank=3,
+        relative_predicted_gain=0.02,
+        experiment=experiment,
+    ) == pytest.approx(0.25)
+    assert MODULE._rift_rejected_high_gain_rescue_scale(
+        route="reject",
+        selected_rank=3,
+        relative_predicted_gain=0.005,
+        experiment=experiment,
+    ) is None
+    assert MODULE._rift_rejected_high_gain_rescue_scale(
+        route="rank_filtered",
+        selected_rank=3,
+        relative_predicted_gain=0.02,
+        experiment=experiment,
+    ) is None
+    assert MODULE._rift_rejected_high_gain_rescue_scale(
+        route="reject",
+        selected_rank=0,
+        relative_predicted_gain=0.02,
+        experiment=experiment,
+    ) is None
+
+
+def test_validate_requires_valid_rejected_high_gain_rescue_scale() -> None:
+    config_path = SCRIPT.parents[1] / "configs" / "local_1_5b_rift_development.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["experiment"][
+        "rift_rejected_high_gain_rescue_minimum_relative_gain"
+    ] = 0.01
+    config["experiment"]["rift_rejected_high_gain_rescue_scale"] = 0.0
+
+    with pytest.raises(ValueError, match="rift_rejected_high_gain_rescue_scale"):
+        MODULE._validate_config(config, "rift")
+
+
 def test_rift_gradient_batch_masks_eos_from_classification_objective() -> None:
     class FakeTokenizer:
         eos_token = "<eos>"

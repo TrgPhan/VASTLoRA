@@ -1,7 +1,7 @@
 # Week 8 - Main classification matrix
 
-Status: local 1.5B held-out complete (`NO_GO` for the strong claim); full 3B
-GPU matrix pending
+Status: local 1.5B gain-mass v1 held-out complete (`NO_GO`); positive-filter
+candidate held-out va full 3B GPU matrix pending
 
 ## Pham vi chot
 
@@ -41,12 +41,14 @@ GPU matrix pending
 - Week 8 dung `kaggle_3b_rift_competitors.json` lam base va overlay task/regime bang script matrix.
 - QNLI/MNLI dung head-tail truncation de giu ca hai ve cua pair; cac calibration
   split dung label-stratified sampling va khong trung voi local-training pool.
-- Development screening tren Qwen2.5-1.5B da chay du QNLI/MNLI-m/MNLI-mm,
-  4 method va 3 seed. Ket qua xac nhan pipeline va Pareto safety signal, nhung
-  chi co mot late event moi run nen khong du de ket luan thesis.
-- Held-out confirmation 1.5B da chay 72/72 run tren seeds `3201-3206`, moi run
-  co 4 late events va full client coverage. RIFT khong pass strong gate truoc
-  Spectral filter/AlignFed calibration; xem report chi tiet ben duoi.
+- Positive-filter development tren Qwen2.5-1.5B da chay du
+  QNLI/MNLI-m/MNLI-mm voi RIFT, Spectral filter va AlignFed calibration, 3
+  seeds, 4 late events/run va full client coverage. Day van la development,
+  khong phai thesis verdict.
+- Gain-mass v1 held-out da chay 72/72 run tren seeds `3301-3306`. RIFT khong
+  pass strong gate truoc Spectral filter/AlignFed calibration.
+- Positive-filter held-out moi da khoa tai offset `768`, seeds `4301-4306` va
+  chua co result. Khong duoc tron no voi gain-mass v1 held-out.
 
 ## Deliverables
 
@@ -84,6 +86,8 @@ GPU matrix pending
 - [Bang tong hop ket qua bon task](week8_all_tasks_results_summary_vi.md)
 - [Held-out confirmation protocol](local_1_5b_remaining_tasks_confirmation_protocol_vi.md)
 - [Held-out confirmation results](local_1_5b_remaining_tasks_confirmation_results_vi.md)
+- [Positive-filter development results](rift_positive_filter_development_results_vi.md)
+- [Positive-filter held-out protocol](rift_positive_filter_confirmation_protocol_vi.md)
 
 ## Cach chay
 

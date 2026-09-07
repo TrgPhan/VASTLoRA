@@ -554,6 +554,31 @@ def test_rejected_high_gain_rescue_scales_inverse_to_staleness() -> None:
         ) == pytest.approx(expected)
 
 
+def test_rejected_high_gain_rescue_honors_minimum_staleness() -> None:
+    experiment = {
+        "rift_rejected_high_gain_rescue_minimum_relative_gain": 0.01,
+        "rift_rejected_high_gain_rescue_min_staleness": 8,
+        "rift_rejected_high_gain_rescue_staleness_budget": 6.0,
+        "rift_rejected_high_gain_rescue_max_scale": 0.75,
+        "rift_step_scales": [1.0, 0.75, 0.5, 0.25, 0.125],
+    }
+
+    assert MODULE._rift_rejected_high_gain_rescue_scale(
+        route="reject",
+        selected_rank=3,
+        staleness=4,
+        relative_predicted_gain=0.02,
+        experiment=experiment,
+    ) is None
+    assert MODULE._rift_rejected_high_gain_rescue_scale(
+        route="reject",
+        selected_rank=3,
+        staleness=8,
+        relative_predicted_gain=0.02,
+        experiment=experiment,
+    ) == pytest.approx(0.75)
+
+
 def test_validate_requires_valid_rejected_high_gain_rescue_scale() -> None:
     config_path = SCRIPT.parents[1] / "configs" / "local_1_5b_rift_development.json"
     config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -563,6 +588,21 @@ def test_validate_requires_valid_rejected_high_gain_rescue_scale() -> None:
     config["experiment"]["rift_rejected_high_gain_rescue_scale"] = 0.0
 
     with pytest.raises(ValueError, match="rift_rejected_high_gain_rescue_scale"):
+        MODULE._validate_config(config, "rift")
+
+
+def test_validate_rejects_invalid_rescue_minimum_staleness() -> None:
+    config_path = SCRIPT.parents[1] / "configs" / "local_1_5b_rift_development.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["experiment"][
+        "rift_rejected_high_gain_rescue_minimum_relative_gain"
+    ] = 0.01
+    config["experiment"]["rift_rejected_high_gain_rescue_scale"] = 0.25
+    config["experiment"]["rift_rejected_high_gain_rescue_min_staleness"] = 1.5
+
+    with pytest.raises(
+        ValueError, match="rift_rejected_high_gain_rescue_min_staleness"
+    ):
         MODULE._validate_config(config, "rift")
 
 

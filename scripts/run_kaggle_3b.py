@@ -1639,6 +1639,11 @@ def _rift_rejected_high_gain_rescue_scale(
         return None
     if relative_predicted_gain < float(threshold):
         return None
+    minimum_staleness = int(
+        experiment.get("rift_rejected_high_gain_rescue_min_staleness", 0)
+    )
+    if staleness < minimum_staleness:
+        return None
     if "rift_rejected_high_gain_rescue_staleness_budget" not in experiment:
         return float(experiment["rift_rejected_high_gain_rescue_scale"])
 
@@ -2359,6 +2364,21 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
             raise ValueError(
                 "rift_rejected_high_gain_rescue_minimum_relative_gain must be "
                 "finite and positive"
+            )
+        rescue_min_staleness = experiment.get(
+            "rift_rejected_high_gain_rescue_min_staleness", 0
+        )
+        if isinstance(rescue_min_staleness, bool) or not isinstance(
+            rescue_min_staleness, int
+        ):
+            raise ValueError(
+                "rift_rejected_high_gain_rescue_min_staleness must be a "
+                "non-negative integer"
+            )
+        if rescue_min_staleness < 0:
+            raise ValueError(
+                "rift_rejected_high_gain_rescue_min_staleness must be a "
+                "non-negative integer"
             )
         has_fixed_scale = "rift_rejected_high_gain_rescue_scale" in experiment
         has_staleness_budget = (

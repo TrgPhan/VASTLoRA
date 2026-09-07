@@ -1,0 +1,113 @@
+{
+  "name": "riftlora-local-1.5b-positive-filter-candidate-offset512",
+  "required_schema_version": 4,
+  "description": "Final development candidate: retain every positive-gradient singular component, gate stale updates, and rescue only high-gain extreme-delay rejections with a bounded scale.",
+  "runner": {
+    "script": "scripts/run_kaggle_3b.py",
+    "buffer_size": 1,
+    "schedule_mode": "async"
+  },
+  "experiment": {
+    "warmup_returns": 4,
+    "collected_returns": 16,
+    "calibration_sampling": "stratified",
+    "component_score_objective": "class_nll",
+    "calibration_gate_objective": "class_nll",
+    "monitor_objective": "class_nll",
+    "rift_component_gain_mass": 1.0,
+    "rift_stale_component_gain_mass": 1.0,
+    "rift_component_pruning_min_staleness": 4,
+    "rift_gate_selection": "largest_safe_scale",
+    "rift_gate_min_staleness": 4,
+    "rift_gate_confidence_z": 0.25,
+    "rift_max_mean_increase": 0.0,
+    "rift_step_scales": [1.0, 0.75, 0.5, 0.25, 0.125],
+    "rift_include_freshness_fallback": true,
+    "rift_rejected_high_gain_rescue_minimum_relative_gain": 0.01,
+    "rift_rejected_high_gain_rescue_min_staleness": 8,
+    "rift_rejected_high_gain_rescue_staleness_budget": 6.0,
+    "rift_rejected_high_gain_rescue_max_scale": 0.75,
+    "eval_batch_size": 1
+  },
+  "tasks": [
+    {
+      "name": "qnli",
+      "base_config": "configs/local_1_5b_rift_development.json",
+      "subset": "qnli",
+      "task": "qnli",
+      "validation_split": "validation",
+      "question_column": "question",
+      "sentence_column": "sentence",
+      "label_column": "label",
+      "label_texts": [" yes", " no"],
+      "max_train_examples": 512,
+      "eval_examples": 96,
+      "eval_offset": 512,
+      "model_overrides": {"max_length": 128},
+      "experiment_overrides": {
+        "calibration_gradient_examples": 8,
+        "calibration_gate_examples": 24,
+        "monitor_examples": 24
+      }
+    },
+    {
+      "name": "mnli_m",
+      "run_name": "mnli_m",
+      "base_config": "configs/local_1_5b_rift_development.json",
+      "subset": "mnli",
+      "task": "mnli",
+      "validation_split": "validation_matched",
+      "premise_column": "premise",
+      "hypothesis_column": "hypothesis",
+      "label_column": "label",
+      "label_texts": [" true", " unknown", " false"],
+      "prompt_style": "truth_value",
+      "max_train_examples": 512,
+      "eval_examples": 96,
+      "eval_offset": 512,
+      "model_overrides": {"max_length": 192},
+      "experiment_overrides": {
+        "calibration_gradient_examples": 9,
+        "calibration_gate_examples": 24,
+        "monitor_examples": 24
+      }
+    },
+    {
+      "name": "mnli_mm",
+      "run_name": "mnli_mm",
+      "base_config": "configs/local_1_5b_rift_development.json",
+      "subset": "mnli",
+      "task": "mnli",
+      "validation_split": "validation_mismatched",
+      "premise_column": "premise",
+      "hypothesis_column": "hypothesis",
+      "label_column": "label",
+      "label_texts": [" true", " unknown", " false"],
+      "prompt_style": "truth_value",
+      "max_train_examples": 512,
+      "eval_examples": 96,
+      "eval_offset": 512,
+      "model_overrides": {"max_length": 192},
+      "experiment_overrides": {
+        "calibration_gradient_examples": 9,
+        "calibration_gate_examples": 24,
+        "monitor_examples": 24
+      }
+    }
+  ],
+  "regimes": [
+    {
+      "name": "positive_filter_extreme_rescue",
+      "partition_mode": "label_shard",
+      "client_ranks": [2, 4, 8, 4],
+      "compute_times": [1.0, 2.0, 5.0, 10.0]
+    }
+  ],
+  "methods": ["rift"],
+  "seeds": [4101, 4102, 4103],
+  "notes": [
+    "This is the final candidate selected on development offset 512 before a new held-out protocol is frozen.",
+    "The rule contains no task- or seed-specific branch and all declared seeds must be retained.",
+    "This development matrix cannot produce a final GO verdict."
+  ]
+}

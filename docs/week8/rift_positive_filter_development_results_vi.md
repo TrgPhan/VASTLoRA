@@ -6,10 +6,10 @@ Ngay cap nhat: 2026-09-07
 
 - Verdict chinh thuc gan nhat van la **`NO_GO`** cho RIFT gain-mass v1 tren
   clean held-out offset 256, 6 seeds va 72/72 runs.
-- RIFT positive-filter + extreme-staleness rescue moi dat **development GO to
+- RIFT positive-filter + extreme-staleness rescue dat **development GO to
   confirmation** truoc Spectral filter tren ca QNLI, MNLI-m va MNLI-mm.
 - Day chua phai thesis `GO`: candidate moi chi co 3 development seeds, chua co
-  paired CI95, chua rerun AlignFed calibration va chua dung held-out moi.
+  paired CI95 va chua dung held-out moi.
 - Khong seed nao bi loai theo performance.
 
 ## Official clean held-out cua RIFT gain-mass v1
@@ -84,6 +84,28 @@ Ca ba task deu pass **point-estimate** margins da khoa:
 - late-harm reduction > 0;
 - cumulative late-harm reduction > 0.
 
+## Development comparison voi AlignFed calibration
+
+AlignFed companion da hoan tat 9/9 runs voi cung offset, seeds, schedule,
+calibration sizes va local-training config. Khac biet quan trong la AlignFed
+reject toan bo update khi gate khong an toan, con RIFT co gang giu utility bang
+component filtering va bounded rescue.
+
+| Task | Method | Acc % | Class NLL | Harmful % | Late harmful % | Normalized cumulative | Accept % |
+|---|---|---:|---:|---:|---:|---:|---:|
+| QNLI | RIFT candidate | 82.639 | 0.419593 | 12.50 | 16.67 | 0.000203 | 100.00 |
+| QNLI | AlignFed calibration | 81.250 | 0.423322 | 10.42 | 0.00 | 0.000000 | 70.83 |
+| MNLI-m | RIFT candidate | 73.611 | 0.605197 | 27.08 | 33.33 | 0.000827 | 97.92 |
+| MNLI-m | AlignFed calibration | 71.528 | 0.630075 | 8.33 | 8.33 | 0.000059 | 62.50 |
+| MNLI-mm | RIFT candidate | 67.708 | 0.691651 | 27.08 | 33.33 | 0.000827 | 97.92 |
+| MNLI-mm | AlignFed calibration | 64.931 | 0.719745 | 8.33 | 8.33 | 0.000059 | 62.50 |
+
+RIFT co mean accuracy va class NLL tot hon AlignFed tren ca ba task, dong thoi
+acceptance cao hon `29.17 pp` tren QNLI va `35.42 pp` tren hai MNLI slice.
+Nguoc lai, AlignFed co raw harmful/late-harm thap hon vi reject nhieu update.
+Do do RIFT **khong dominate AlignFed tren moi metric**; hai method la hai diem
+khac nhau tren utility-safety-utilization frontier.
+
 ## Best observed cua candidate
 
 Chi mang tinh mo ta, khong dung cho verdict.
@@ -109,7 +131,9 @@ Chi mang tinh mo ta, khong dung cho verdict.
 ## Trang thai nghien cuu
 
 Trang thai hop le la **PROMISING / GO to a new confirmation**, khong phai final
-`GO`. Buoc bat buoc tiep theo la freeze offset moi, it nhat 6 seeds, rerun
-RIFT candidate, Spectral filter, AlignFed calibration va FedRot; sau do dung
-paired CI95 analyzer. Neu bat ky hard slice khong pass, verdict van la
-`NO_GO` hoac `INCONCLUSIVE` dung theo analyzer.
+`GO`. Protocol moi da duoc khoa tai
+`docs/week8/rift_positive_filter_confirmation_protocol_vi.md`: offset 768,
+seeds 4301-4306, RIFT candidate, Spectral filter, AlignFed calibration va
+FedRot. Analyzer dung relative-safety gate voi throughput-matched controls va
+constrained-utilization gate voi reject-heavy AlignFed. Neu bat ky hard slice
+khong pass, verdict van la `NO_GO` hoac `INCONCLUSIVE` dung theo analyzer.

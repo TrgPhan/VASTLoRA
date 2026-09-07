@@ -49,6 +49,11 @@ DEFAULT_WEEK8_GATE = {
     "nll_noninferiority_margin": -0.005,
     "requires_positive_late_harm_reduction": True,
     "requires_positive_cumulative_late_harm_reduction": True,
+    "quality_superiority": "none",
+    "minimum_acceptance_advantage_pp": None,
+    "acceptance_advantage_basis": "mean",
+    "maximum_normalized_cumulative_late_harm": None,
+    "opponent_gates": {},
 }
 
 
@@ -126,6 +131,10 @@ def resolve_week8_gate(matrix: dict[str, Any]) -> dict[str, Any]:
     gate = dict(DEFAULT_WEEK8_GATE)
     gate.update(matrix.get("gates", {}))
     gate["hard_regimes"] = [str(value) for value in gate["hard_regimes"]]
+    gate["opponent_gates"] = {
+        str(method): dict(overrides)
+        for method, overrides in gate.get("opponent_gates", {}).items()
+    }
     return gate
 
 
@@ -475,6 +484,24 @@ def paired_against(frame: pd.DataFrame, target: str) -> pd.DataFrame:
             if "acceptance_rate_target" in joined
             else float("nan")
         )
+        opponent_acceptance_rate = (
+            float(joined["acceptance_rate_candidate"].mean())
+            if "acceptance_rate_candidate" in joined
+            else float("nan")
+        )
+        acceptance_gain = (
+            100.0
+            * (
+                joined["acceptance_rate_target"]
+                - joined["acceptance_rate_candidate"]
+            )
+            if "acceptance_rate_target" in joined
+            and "acceptance_rate_candidate" in joined
+            else pd.Series(dtype=float)
+        )
+        acceptance_mean, acceptance_low, acceptance_high = mean_ci95(
+            acceptance_gain
+        )
         rows.append(
             {
                 "task": task,
@@ -521,6 +548,10 @@ def paired_against(frame: pd.DataFrame, target: str) -> pd.DataFrame:
                 "target_worst_step_harm_reduction_ci95_low": worst_low,
                 "target_worst_step_harm_reduction_ci95_high": worst_high,
                 "target_acceptance_rate": target_acceptance_rate,
+                "opponent_acceptance_rate": opponent_acceptance_rate,
+                "target_acceptance_gain_pp": acceptance_mean,
+                "target_acceptance_gain_ci95_low": acceptance_low,
+                "target_acceptance_gain_ci95_high": acceptance_high,
                 "target_client_return_coverage": (
                     float(joined["client_return_coverage_target"].mean())
                     if "client_return_coverage_target" in joined
@@ -539,6 +570,13 @@ def paired_against(frame: pd.DataFrame, target: str) -> pd.DataFrame:
                 "target_cumulative_late_harm": (
                     float(joined["cumulative_late_harm_target"].mean())
                     if "cumulative_late_harm_target" in joined
+                    else float("nan")
+                ),
+                "target_normalized_cumulative_late_harm": (
+                    float(
+                        joined["normalized_cumulative_late_harm_target"].mean()
+                    )
+                    if "normalized_cumulative_late_harm_target" in joined
                     else float("nan")
                 ),
                 "target_worst_step_loss_increase": (
@@ -574,49 +612,111 @@ def week8_verdict(
         }
 
     for _, row in hard.iterrows():
-        seed_ok = int(row["paired_seeds"]) >= int(gate["minimum_paired_seeds"])
+        opponent = str(row["method"])
+        row_gate = dict(gate)
+        row_gate.update(gate.get("opponent_gates", {}).get(opponent, {}))
+        seed_ok = int(row["paired_seeds"]) >= int(
+            row_gate["minimum_paired_seeds"]
+        )
         accuracy_ok = (
             float(row["target_accuracy_gain_ci95_low"])
-            >= float(gate["accuracy_noninferiority_margin_pp"])
+            >= float(row_gate["accuracy_noninferiority_margin_pp"])
         )
         nll_ok = (
             float(row["target_nll_reduction_ci95_low"])
-            >= float(gate["nll_noninferiority_margin"])
+            >= float(row_gate["nll_noninferiority_margin"])
         )
         acceptance_rate = float(row.get("target_acceptance_rate", float("nan")))
         acceptance_observed = math.isfinite(acceptance_rate)
         acceptance_ok = (
             acceptance_observed
-            and acceptance_rate >= float(gate["minimum_acceptance_rate"])
+            and acceptance_rate >= float(row_gate["minimum_acceptance_rate"])
         )
         client_coverage = float(
             row.get("target_client_return_coverage", float("nan"))
         )
         client_coverage_ok = math.isfinite(client_coverage) and client_coverage >= float(
-            gate.get("minimum_client_return_coverage", 1.0)
+            row_gate.get("minimum_client_return_coverage", 1.0)
         )
         late_event_count = float(row.get("target_late_event_count", float("nan")))
         late_events_ok = math.isfinite(late_event_count) and late_event_count >= int(
-            gate.get("minimum_late_events", 1)
+            row_gate.get("minimum_late_events", 1)
         )
-        late_harm_ok = float(row["target_late_harmful_reduction"]) > 0.0
-        if gate["requires_positive_late_harm_reduction"]:
+        late_harm_ok = True
+        if row_gate["requires_positive_late_harm_reduction"]:
+            late_harm_ok = float(row["target_late_harmful_reduction"]) > 0.0
             late_harm_ok = late_harm_ok and float(
                 row["target_late_harmful_reduction_ci95_low"]
             ) >= 0.0
         cumulative_harm_ok = True
-        if gate.get("requires_positive_cumulative_late_harm_reduction", False):
+        if row_gate.get("requires_positive_cumulative_late_harm_reduction", False):
             cumulative_harm_ok = float(
                 row.get("target_cumulative_late_harm_reduction", 0.0)
             ) > 0.0
             cumulative_harm_ok = cumulative_harm_ok and float(
                 row.get("target_cumulative_late_harm_reduction_ci95_low", 0.0)
             ) >= 0.0
+
+        quality_mode = str(row_gate.get("quality_superiority", "none"))
+        if quality_mode == "none":
+            quality_superiority_ok = True
+        elif quality_mode == "point_any":
+            quality_superiority_ok = (
+                float(row["target_accuracy_gain_pp"]) > 0.0
+                or float(row["target_nll_reduction"]) > 0.0
+            )
+        elif quality_mode == "ci95_any":
+            quality_superiority_ok = (
+                float(row["target_accuracy_gain_ci95_low"]) > 0.0
+                or float(row["target_nll_reduction_ci95_low"]) > 0.0
+            )
+        else:
+            raise ValueError(f"unsupported quality_superiority: {quality_mode!r}")
+
+        acceptance_advantage = float(
+            row.get("target_acceptance_gain_pp", float("nan"))
+        )
+        acceptance_advantage_basis = str(
+            row_gate.get("acceptance_advantage_basis", "mean")
+        )
+        if acceptance_advantage_basis == "ci95_low":
+            acceptance_advantage = float(
+                row.get("target_acceptance_gain_ci95_low", float("nan"))
+            )
+        elif acceptance_advantage_basis != "mean":
+            raise ValueError(
+                "acceptance_advantage_basis must be 'mean' or 'ci95_low'"
+            )
+        minimum_acceptance_advantage = row_gate.get(
+            "minimum_acceptance_advantage_pp"
+        )
+        acceptance_advantage_ok = (
+            True
+            if minimum_acceptance_advantage is None
+            else math.isfinite(acceptance_advantage)
+            and acceptance_advantage >= float(minimum_acceptance_advantage)
+        )
+
+        normalized_late_harm = float(
+            row.get("target_normalized_cumulative_late_harm", float("nan"))
+        )
+        maximum_normalized_late_harm = row_gate.get(
+            "maximum_normalized_cumulative_late_harm"
+        )
+        absolute_safety_ok = (
+            True
+            if maximum_normalized_late_harm is None
+            else math.isfinite(normalized_late_harm)
+            and normalized_late_harm <= float(maximum_normalized_late_harm)
+        )
         checks.append(
             {
                 "task": row["task"],
                 "regime": row["regime"],
-                "opponent": row["method"],
+                "opponent": opponent,
+                "comparison_mode": str(
+                    row_gate.get("comparison_mode", "relative_safety")
+                ),
                 "paired_seeds": int(row["paired_seeds"]),
                 "seed_ok": seed_ok,
                 "accuracy_noninferior": accuracy_ok,
@@ -627,6 +727,9 @@ def week8_verdict(
                 "late_event_count_ok": late_events_ok,
                 "late_harm_improved": late_harm_ok,
                 "cumulative_late_harm_improved": cumulative_harm_ok,
+                "quality_superiority": quality_superiority_ok,
+                "acceptance_advantage": acceptance_advantage_ok,
+                "absolute_safety_budget": absolute_safety_ok,
                 "pass": seed_ok
                 and accuracy_ok
                 and nll_ok
@@ -634,7 +737,10 @@ def week8_verdict(
                 and client_coverage_ok
                 and late_events_ok
                 and late_harm_ok
-                and cumulative_harm_ok,
+                and cumulative_harm_ok
+                and quality_superiority_ok
+                and acceptance_advantage_ok
+                and absolute_safety_ok,
             }
         )
 
@@ -657,6 +763,14 @@ def week8_verdict(
     elif any(not check["acceptance_noncollapse"] for check in checks):
         status = "NO_GO"
         reason = "RIFT fails the minimum acceptance-rate gate."
+    elif any(
+        not check["quality_superiority"]
+        or not check["acceptance_advantage"]
+        or not check["absolute_safety_budget"]
+        for check in checks
+    ):
+        status = "NO_GO"
+        reason = "RIFT fails a predeclared quality, utilization, or safety-budget gate."
     elif any(not check["client_coverage_ok"] for check in checks):
         status = "INCONCLUSIVE"
         reason = "Measured client-return coverage is incomplete."
@@ -750,8 +864,8 @@ def render_report(
             "",
             f"## Paired Gains For `{target}`",
             "",
-            "| Task | Regime | Opponent | Paired seeds | Acc gain | Acc wins | Loss reduction | Loss wins | Late harmful reduction | Cumulative late-harm reduction |",
-            "|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
+            "| Task | Regime | Opponent | Paired seeds | Acc gain | Acc wins | Loss reduction | Loss wins | Acceptance gain | Late harmful reduction | Cumulative late-harm reduction |",
+            "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
     for _, row in paired.iterrows():
@@ -766,6 +880,9 @@ def render_report(
             f"[{row['target_nll_reduction_ci95_low']:+.6f}, "
             f"{row['target_nll_reduction_ci95_high']:+.6f}] | "
             f"{int(row['target_nll_wins'])}/{int(row['paired_seeds'])} | "
+            f"{row['target_acceptance_gain_pp']:+.2f} pp "
+            f"[{row['target_acceptance_gain_ci95_low']:+.2f}, "
+            f"{row['target_acceptance_gain_ci95_high']:+.2f}] | "
             f"{100 * row['target_late_harmful_reduction']:+.2f} pp "
             f"[{100 * row['target_late_harmful_reduction_ci95_low']:+.2f}, "
             f"{100 * row['target_late_harmful_reduction_ci95_high']:+.2f}] | "
@@ -778,13 +895,14 @@ def render_report(
             "",
             "## Week 8 Hard-Slice Gate",
             "",
-            "| Task | Regime | Opponent | Seeds | Accuracy NI | Loss NI | Acceptance | Coverage | Late N | Late rate | Cumulative harm | Pass |",
-            "|---|---|---|---:|---|---|---|---|---|---|---|---|",
+            "| Task | Regime | Opponent | Mode | Seeds | Accuracy NI | Loss NI | Acceptance | Coverage | Late N | Late rate | Cumulative harm | Quality gain | Acceptance gain | Safety budget | Pass |",
+            "|---|---|---|---|---:|---|---|---|---|---|---|---|---|---|---|---|",
         ]
     )
     for check in verdict["hard_slice_checks"]:
         lines.append(
             f"| {check['task']} | {check['regime']} | {check['opponent']} | "
+            f"{check['comparison_mode']} | "
             f"{check['paired_seeds']} | "
             f"{check['accuracy_noninferior']} | "
             f"{check['nll_noninferior']} | "
@@ -793,6 +911,9 @@ def render_report(
             f"{check['late_event_count_ok']} | "
             f"{check['late_harm_improved']} | "
             f"{check['cumulative_late_harm_improved']} | "
+            f"{check['quality_superiority']} | "
+            f"{check['acceptance_advantage']} | "
+            f"{check['absolute_safety_budget']} | "
             f"{check['pass']} |"
         )
     lines.extend(

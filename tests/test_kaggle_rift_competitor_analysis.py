@@ -130,6 +130,97 @@ def test_kaggle_rift_week8_verdict_is_inconclusive_without_hard_slice() -> None:
     assert verdict["status"] == "INCONCLUSIVE"
 
 
+def test_reject_heavy_opponent_uses_utilization_and_absolute_safety_gate() -> None:
+    paired = pd.DataFrame(
+        [
+            {
+                "task": "qnli",
+                "regime": "noniid_high_staleness",
+                "method": "alignfed_calibration",
+                "paired_seeds": 6,
+                "target_acceptance_rate": 0.95,
+                "target_acceptance_gain_pp": 25.0,
+                "target_acceptance_gain_ci95_low": 12.0,
+                "target_accuracy_gain_pp": 0.4,
+                "target_accuracy_gain_ci95_low": -0.4,
+                "target_accuracy_gain_ci95_high": 1.2,
+                "target_nll_reduction": 0.003,
+                "target_nll_reduction_ci95_low": -0.004,
+                "target_nll_reduction_ci95_high": 0.010,
+                "target_late_harmful_reduction": -0.10,
+                "target_late_harmful_reduction_ci95_low": -0.20,
+                "target_late_harmful_reduction_ci95_high": 0.0,
+                "target_cumulative_late_harm_reduction": -0.002,
+                "target_cumulative_late_harm_reduction_ci95_low": -0.004,
+                "target_cumulative_late_harm_reduction_ci95_high": 0.0,
+                "target_normalized_cumulative_late_harm": 0.001,
+                "target_client_return_coverage": 1.0,
+                "target_min_client_returns": 1.0,
+                "target_late_event_count": 8.0,
+            }
+        ]
+    )
+    gate = dict(MODULE.DEFAULT_WEEK8_GATE)
+    gate["opponent_gates"] = {
+        "alignfed_calibration": {
+            "comparison_mode": "constrained_utilization",
+            "requires_positive_late_harm_reduction": False,
+            "requires_positive_cumulative_late_harm_reduction": False,
+            "quality_superiority": "point_any",
+            "minimum_acceptance_advantage_pp": 10.0,
+            "maximum_normalized_cumulative_late_harm": 0.0025,
+        }
+    }
+
+    verdict = MODULE.week8_verdict(paired, gate=gate)
+
+    assert verdict["status"] == "GO"
+    check = verdict["hard_slice_checks"][0]
+    assert check["comparison_mode"] == "constrained_utilization"
+    assert check["late_harm_improved"] is True
+    assert check["acceptance_advantage"] is True
+    assert check["absolute_safety_budget"] is True
+
+
+def test_reject_heavy_opponent_fails_absolute_safety_budget() -> None:
+    paired = pd.DataFrame(
+        [
+            {
+                "task": "qnli",
+                "regime": "noniid_high_staleness",
+                "method": "alignfed_calibration",
+                "paired_seeds": 6,
+                "target_acceptance_rate": 0.95,
+                "target_acceptance_gain_pp": 25.0,
+                "target_accuracy_gain_pp": 0.4,
+                "target_accuracy_gain_ci95_low": -0.4,
+                "target_nll_reduction": 0.003,
+                "target_nll_reduction_ci95_low": -0.004,
+                "target_late_harmful_reduction": -0.10,
+                "target_cumulative_late_harm_reduction": -0.002,
+                "target_normalized_cumulative_late_harm": 0.004,
+                "target_client_return_coverage": 1.0,
+                "target_late_event_count": 8.0,
+            }
+        ]
+    )
+    gate = dict(MODULE.DEFAULT_WEEK8_GATE)
+    gate["opponent_gates"] = {
+        "alignfed_calibration": {
+            "requires_positive_late_harm_reduction": False,
+            "requires_positive_cumulative_late_harm_reduction": False,
+            "quality_superiority": "point_any",
+            "minimum_acceptance_advantage_pp": 10.0,
+            "maximum_normalized_cumulative_late_harm": 0.0025,
+        }
+    }
+
+    verdict = MODULE.week8_verdict(paired, gate=gate)
+
+    assert verdict["status"] == "NO_GO"
+    assert verdict["hard_slice_checks"][0]["absolute_safety_budget"] is False
+
+
 def test_kaggle_rift_completeness_detects_missing_task_and_method() -> None:
     frame = pd.DataFrame(
         [{

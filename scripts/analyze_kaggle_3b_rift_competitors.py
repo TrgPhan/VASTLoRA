@@ -28,6 +28,8 @@ FIDELITY = {
     "spectral_filter": "Spectral-Surgery-style gradient component filter; not official paper implementation",
     "alignfed_calibration": competitor_fidelity("alignfed_calibration"),
     "rift": "proposed rank-wise objective filter plus paired gate",
+    "rift_core": "experimental full-core calibration repair with delay trust region; not confirmed",
+    "rift_diag": "diagonal-only core repair ablation with matched optimization budget",
 }
 
 SKIPPED = {

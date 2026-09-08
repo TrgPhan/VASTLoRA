@@ -27,6 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--method", action="append")
     parser.add_argument("--seed", action="append", type=int)
     parser.add_argument("--eval-offset", type=int)
+    parser.add_argument("--model-name", help="Override backbone for every selected task; use a separate output root")
     parser.add_argument(
         "--output-root",
         type=Path,
@@ -72,6 +73,8 @@ def main() -> None:
             for method in methods:
                 for seed in seeds:
                     config = _build_config(base, task, regime, matrix)
+                    if args.model_name:
+                        config["model"]["name"] = args.model_name
                     if args.eval_offset is not None:
                         config["dataset"]["eval_offset"] = args.eval_offset
                     config["provenance"] = {

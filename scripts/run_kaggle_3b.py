@@ -43,6 +43,7 @@ from riftlora.scale import (
     transport_compact_update,
 )
 from riftlora.scale.tradeoff import reserved_train_eval_indices
+from riftlora.scale.core_repair import CoreRepairConfig, repair_compact_core
 
 
 DEFAULT_LABEL_TEXTS = {
@@ -61,6 +62,8 @@ METHODS = (
     "mtip_hybrid",
     "mtip_routed",
     "rift",
+    "rift_core",
+    "rift_diag",
     "spectral_filter",
     "alignfed_calibration",
 )
@@ -311,6 +314,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
             "freshness" if event_index < experiment["warmup_returns"] else method
         )
         current_state = snapshots[event.arrival_version]
+        core_diagnostics: dict[str, float] = {}
         next_state: dict[str, CompactSVD] = {}
         rhos: list[float] = []
         left_ranks: list[int] = []
@@ -343,7 +347,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
             accepted_routes.append("fedrot")
             for name in next_state:
                 histories[name].append(next_state[name])
-        elif accepted_method in {"rift", "spectral_filter", "alignfed_calibration"}:
+        elif accepted_method in {"rift", "rift_core", "rift_diag", "spectral_filter", "alignfed_calibration"}:
             load_compact_adapter_state(
                 model,
                 current_state,
@@ -426,7 +430,31 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                     abs(scores.calibration_loss), 1e-12
                 )
                 relative_predicted_gains.append(relative_predicted_gain)
-                if accepted_method == "spectral_filter":
+                if accepted_method in {"rift_core", "rift_diag"}:
+                    repair = repair_compact_core(
+                        model, innovations, scores.scores, gradient_batches,
+                        loss_fn=component_score_loss_fn,
+                        server_weight=float(experiment["server_update_weight"]),
+                        staleness=event.staleness,
+                        diagonal_only=accepted_method == "rift_diag",
+                        config=CoreRepairConfig(**experiment.get("rift_core", {})),
+                    )
+                    core_diagnostics = repair.diagnostics
+                    repair_gate = dict(experiment)
+                    repair_gate["rift_include_freshness_fallback"] = False
+                    repair_gate["rift_gate_selection"] = "min_risk"
+                    next_state, accepted_updates, scale, mean_delta, route = _rift_gate_state(
+                        model, tokenizer, current_state, repair.updates, innovations,
+                        calibration_gate, dataset_config=dataset_config,
+                        max_length=config["model"]["max_length"],
+                        batch_size=experiment["eval_batch_size"],
+                        experiment=repair_gate, freshness=freshness,
+                        comparator_updates=filtered,
+                    )
+                    accepted_scales.append(scale)
+                    gate_mean_deltas.append(mean_delta)
+                    accepted_routes.append(route)
+                elif accepted_method == "spectral_filter":
                     if selected_rank:
                         scale = float(experiment.get("spectral_filter_scale", 1.0))
                         next_state = _aggregate_scaled_updates(
@@ -633,6 +661,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         event_rows.append(
             {
                 "event": event_index,
+                **core_diagnostics,
                 "client_id": client_id,
                 "client_rank": active_rank,
                 "base_version": event.base_version,
@@ -1503,8 +1532,12 @@ def _rift_gate_state(
     batch_size: int,
     experiment: Mapping[str, Any],
     freshness: float,
+    comparator_updates: Mapping[str, CompactSVD] | None = None,
 ) -> tuple[dict[str, CompactSVD], dict[str, CompactSVD], float, float, str]:
     candidates: list[tuple[str, float, Mapping[str, CompactSVD]]] = []
+    if comparator_updates is not None:
+        # Put the filter baseline first so an exact tie retains the simpler update.
+        candidates.append(("spectral_comparator", 1.0, comparator_updates))
     if sum(update.rank for update in filtered_updates.values()):
         scales = sorted(
             {float(value) for value in experiment.get("rift_step_scales", [1.0, 0.5, 0.25, 0.125])},
@@ -2232,7 +2265,7 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
         )
     if int(experiment.get("monitor_examples", 0)) <= 0:
         raise ValueError("monitor_examples must be positive to compute harmful metrics")
-    if method in {"rift", "spectral_filter"} and int(
+    if method in {"rift", "rift_core", "rift_diag", "spectral_filter"} and int(
         experiment.get("calibration_gradient_examples", 0)
     ) <= 0:
         raise ValueError(f"{method} requires calibration_gradient_examples > 0")
@@ -2418,10 +2451,18 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
                 raise ValueError(
                     "rift_rejected_high_gain_rescue_max_scale must be in (0, 1]"
                 )
-    if method in {"rift", "alignfed_calibration"} and int(
+    if method in {"rift", "rift_core", "rift_diag", "alignfed_calibration"} and int(
         experiment.get("calibration_gate_examples", 0)
     ) <= 0:
         raise ValueError(f"{method} requires calibration_gate_examples > 0")
+    if method in {"rift_core", "rift_diag"}:
+        CoreRepairConfig(**experiment.get("rift_core", {})).validate()
+        if float(experiment["server_update_weight"]) <= 0:
+            raise ValueError("core repair requires positive server_update_weight")
+        if experiment.get("component_score_objective") != "class_nll":
+            raise ValueError("core repair requires component_score_objective=class_nll")
+        if float(experiment.get("rift_component_gain_mass", 1.0)) != 1.0:
+            raise ValueError("core repair comparator requires rift_component_gain_mass=1")
     if not 0.0 <= experiment.get("residual_beta", 0.5) <= 1.0:
         raise ValueError("residual_beta must be between zero and one")
     if experiment.get("residual_staleness_temperature", 1.0) <= 0.0:

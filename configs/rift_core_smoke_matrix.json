@@ -1,0 +1,97 @@
+{
+  "name": "rift-core-integration-smoke",
+  "required_schema_version": 4,
+  "description": "Exploratory full-core versus diagonal calibration repair. Not a held-out verdict.",
+  "runner": {
+    "script": "scripts/run_kaggle_3b.py",
+    "buffer_size": 1,
+    "schedule_mode": "async"
+  },
+  "experiment": {
+    "warmup_returns": 4,
+    "collected_returns": 2,
+    "calibration_sampling": "stratified",
+    "calibration_gradient_examples": 6,
+    "calibration_gate_examples": 12,
+    "monitor_examples": 12,
+    "calibration_gradient_batch_size": 1,
+    "eval_batch_size": 1,
+    "component_score_objective": "class_nll",
+    "calibration_gate_objective": "class_nll",
+    "monitor_objective": "class_nll",
+    "rift_component_gain_mass": 1,
+    "rift_gate_min_staleness": 4,
+    "rift_gate_selection": "largest_safe_scale",
+    "rift_gate_confidence_z": 0.25,
+    "rift_max_mean_increase": 0,
+    "rift_step_scales": [
+      1,
+      0.5,
+      0.25
+    ],
+    "rift_include_freshness_fallback": true,
+    "late_tau": 4,
+    "extreme_tau": 8,
+    "rift_core": {
+      "steps": 2,
+      "learning_rate": 0.03,
+      "radius": 0.5,
+      "proximal_weight": 0.01,
+      "delay_scale": 8
+    }
+  },
+  "tasks": [
+    {
+      "name": "qnli",
+      "subset": "qnli",
+      "task": "qnli",
+      "validation_split": "validation",
+      "question_column": "question",
+      "sentence_column": "sentence",
+      "label_texts": [
+        " yes",
+        " no"
+      ],
+      "eval_offset": 1024,
+      "base_config": "configs/local_1_5b_rift_development.json",
+      "label_column": "label",
+      "max_train_examples": 512,
+      "eval_examples": 24,
+      "model_overrides": {
+        "max_length": 128
+      }
+    }
+  ],
+  "regimes": [
+    {
+      "name": "noniid_high_staleness",
+      "partition_mode": "label_shard",
+      "client_ranks": [
+        2,
+        4,
+        8,
+        4
+      ],
+      "compute_times": [
+        1,
+        2,
+        5,
+        10
+      ]
+    }
+  ],
+  "methods": [
+    "spectral_filter",
+    "rift_diag",
+    "rift_core"
+  ],
+  "seeds": [
+    5101
+  ],
+  "notes": [
+    "All methods share train, calibration, eval examples, schedules and local compute. Core methods use extra server gradients: report cost.",
+    "RIFT here is a gate-only filter reference without high-gain rescue, not the earlier positive-filter-rescue candidate.",
+    "SST-2 offset512 is reused development. QNLI/MNLI offset1024 is development, never a future confirmation split.",
+    "Full and diagonal repair both fit on gradient split then select rank-projected states on gate split; monitor/eval never used for selection."
+  ]
+}

@@ -102,7 +102,8 @@ def test_build_config_applies_regime_experiment_overrides_last() -> None:
 
 def test_completed_result_must_match_schema_matrix_and_config(tmp_path: Path) -> None:
     MODULE._RUNNER_MODULE = SimpleNamespace(
-        _config_fingerprint=lambda config: config["test_fingerprint"]
+        _config_fingerprint=lambda config: config["test_fingerprint"],
+        _git_commit=lambda: "commit-1",
     )
     config = {
         "test_fingerprint": "cfg-1",
@@ -118,6 +119,7 @@ def test_completed_result_must_match_schema_matrix_and_config(tmp_path: Path) ->
                 "seed": 4101,
                 "provenance": {"matrix_sha256": "matrix-1"},
                 "config_fingerprint": "cfg-1",
+                "git_commit": "commit-1",
                 "git_worktree_dirty": False,
             }
         ),
@@ -144,6 +146,20 @@ def test_completed_result_must_match_schema_matrix_and_config(tmp_path: Path) ->
         matrix=matrix,
     )
 
+    payload = json.loads(result_path.read_text(encoding="utf-8"))
+    payload["config_fingerprint"] = "cfg-1"
+    payload["git_commit"] = "commit-2"
+    result_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert not MODULE._completed_result_matches(
+        result_path,
+        config=config,
+        method="rift",
+        seed=4101,
+        matrix=matrix,
+    )
+
+    payload["git_commit"] = "commit-1"
     payload["config_fingerprint"] = "cfg-1"
     payload["git_worktree_dirty"] = True
     result_path.write_text(json.dumps(payload), encoding="utf-8")

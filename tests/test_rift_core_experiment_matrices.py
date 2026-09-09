@@ -43,10 +43,13 @@ def test_confirmation_covers_every_week8_task_and_primary_control() -> None:
     assert set(_task_map(matrix)) == {"sst2", "qnli", "mnli_m", "mnli_mm"}
     assert len(matrix["seeds"]) == 6
     assert set(matrix["methods"]) == {
+        "raw",
+        "freshness",
         "fedrot",
         "spectral_filter",
         "alignfed_calibration",
         "rift",
+        "rift_diag",
         "rift_core",
     }
     assert matrix["runner"] == {"script": "scripts/run_kaggle_3b.py", "buffer_size": 1, "schedule_mode": "async"}
@@ -71,6 +74,7 @@ def test_core_protocol_is_frozen_across_remaining_and_confirmation() -> None:
         "calibration_gradient_examples",
         "calibration_gate_examples",
         "monitor_examples",
+        "harm_epsilon",
         "component_score_objective",
         "calibration_gate_objective",
         "monitor_objective",
@@ -89,3 +93,14 @@ def test_core_protocol_is_frozen_across_remaining_and_confirmation() -> None:
 
     assert confirmation["experiment"]["warmup_returns"] >= development["experiment"]["warmup_returns"]
     assert confirmation["experiment"]["collected_returns"] >= development["experiment"]["collected_returns"]
+
+
+def test_scaled_evaluation_protocol_is_large_and_disjoint() -> None:
+    development = _task_map(_load(CORE_DEVELOPMENT_PATH))
+    confirmation = _task_map(_load(CONFIRMATION_PATH))
+
+    assert all(task["eval_examples"] >= 512 for task in development.values())
+    assert all(task["eval_examples"] >= 1024 for task in confirmation.values())
+    assert confirmation["sst2"]["eval_split"] == "train"
+    assert confirmation["sst2"]["reserve_eval_from_train"] is True
+    assert confirmation["sst2"]["eval_shuffle_seed"] == 271828

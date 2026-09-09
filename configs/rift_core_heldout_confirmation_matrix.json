@@ -1,7 +1,7 @@
 {
-  "name": "rift-core-heldout-confirmation-v1",
-  "required_schema_version": 4,
-  "description": "Pre-registered held-out confirmation of the selected RIFT-Core method on all four Week 8 classification tasks.",
+  "name": "rift-core-heldout-confirmation-v2",
+  "required_schema_version": 5,
+  "description": "Held-out confirmation with expanded evaluation sets, corrected safety metrics and complete internal controls.",
   "runner": {
     "script": "scripts/run_kaggle_3b.py",
     "buffer_size": 1,
@@ -19,6 +19,7 @@
     "component_score_objective": "class_nll",
     "calibration_gate_objective": "class_nll",
     "monitor_objective": "class_nll",
+    "harm_epsilon": 0.000001,
     "rift_component_gain_mass": 1,
     "rift_gate_min_staleness": 4,
     "rift_gate_selection": "largest_safe_scale",
@@ -42,13 +43,16 @@
       "subset": "sst2",
       "task": "sst2",
       "validation_split": "validation",
+      "eval_split": "train",
+      "reserve_eval_from_train": true,
+      "eval_shuffle_seed": 271828,
       "text_column": "sentence",
       "label_texts": [" negative", " positive"],
-      "eval_offset": 704,
+      "eval_offset": 4096,
       "base_config": "configs/local_1_5b_rift_development.json",
       "label_column": "label",
       "max_train_examples": 512,
-      "eval_examples": 168,
+      "eval_examples": 1024,
       "model_overrides": {
         "max_length": 192
       }
@@ -61,11 +65,11 @@
       "question_column": "question",
       "sentence_column": "sentence",
       "label_texts": [" yes", " no"],
-      "eval_offset": 1536,
+      "eval_offset": 2048,
       "base_config": "configs/local_1_5b_rift_development.json",
       "label_column": "label",
       "max_train_examples": 512,
-      "eval_examples": 512,
+      "eval_examples": 1024,
       "model_overrides": {
         "max_length": 192
       }
@@ -80,11 +84,11 @@
       "hypothesis_column": "hypothesis",
       "label_texts": [" true", " unknown", " false"],
       "prompt_style": "truth_value",
-      "eval_offset": 1536,
+      "eval_offset": 2048,
       "base_config": "configs/local_1_5b_rift_development.json",
       "label_column": "label",
       "max_train_examples": 512,
-      "eval_examples": 512,
+      "eval_examples": 1024,
       "model_overrides": {
         "max_length": 128
       }
@@ -99,11 +103,11 @@
       "hypothesis_column": "hypothesis",
       "label_texts": [" true", " unknown", " false"],
       "prompt_style": "truth_value",
-      "eval_offset": 1536,
+      "eval_offset": 2048,
       "base_config": "configs/local_1_5b_rift_development.json",
       "label_column": "label",
       "max_train_examples": 512,
-      "eval_examples": 512,
+      "eval_examples": 1024,
       "model_overrides": {
         "max_length": 128
       }
@@ -118,10 +122,13 @@
     }
   ],
   "methods": [
+    "raw",
+    "freshness",
     "fedrot",
     "spectral_filter",
     "alignfed_calibration",
     "rift",
+    "rift_diag",
     "rift_core"
   ],
   "seeds": [6101, 6102, 6103, 6104, 6105, 6106],
@@ -135,21 +142,28 @@
     "nll_noninferiority_margin": -0.005,
     "requires_positive_late_harm_reduction": true,
     "requires_positive_cumulative_late_harm_reduction": true,
-    "quality_superiority": "point_any",
+    "allow_equal_at_zero_harm": true,
+    "quality_superiority": "ci95_any",
     "opponent_gates": {
       "rift": {
         "comparison_mode": "internal_ablation",
         "requires_positive_late_harm_reduction": false,
         "requires_positive_cumulative_late_harm_reduction": false,
-        "quality_superiority": "point_any"
+        "quality_superiority": "ci95_any"
+      },
+      "rift_diag": {
+        "comparison_mode": "full_core_ablation",
+        "requires_positive_late_harm_reduction": false,
+        "requires_positive_cumulative_late_harm_reduction": false,
+        "quality_superiority": "ci95_any"
       }
     }
   },
   "notes": [
-    "This manifest freezes the selected Core configuration before seeds 6101-6106 or the declared evaluation windows are observed.",
-    "SST-2 uses all 168 examples remaining after shuffled offset 704; QNLI and both MNLI splits use 512 examples starting at offset 1536.",
+    "This v2 manifest must be committed before seeds 6101-6106 are run; every completed result must match that exact implementation commit.",
+    "SST-2 holds out 1024 fixed train examples and removes them before client/calibration sampling. QNLI and both MNLI splits use 1024 validation examples starting at offset2048.",
     "FedRot is a geometry baseline, Spectral Filter is the nearest diagonal component baseline, AlignFed calibration is a whole-update safety control, and old RIFT is the internal gate-only ablation.",
-    "RIFT-Diag remains a development ablation and is intentionally excluded from the primary confirmation verdict.",
+    "RIFT-Diag is retained as the equal-budget diagonal repair control needed to test whether full-core mixing contributes.",
     "Every seed has equal weight and no seed may be removed after inspecting any method result.",
     "This confirms immediate asynchronous aggregation only; buffer_size remains 1."
   ]

@@ -77,6 +77,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--model-name")
+    parser.add_argument("--model-revision")
     parser.add_argument("--collected-returns", type=int)
     parser.add_argument("--local-steps", type=int)
     parser.add_argument("--eval-examples", type=int)
@@ -128,7 +129,14 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
     _seed_everything(seed)
     config = _resolve_single_regime_config(config)
     dataset_config = config["dataset"]
-    raw = load_dataset(dataset_config["hub_path"], dataset_config.get("subset"))
+    dataset_kwargs = {}
+    if dataset_config.get("revision") is not None:
+        dataset_kwargs["revision"] = str(dataset_config["revision"])
+    raw = load_dataset(
+        dataset_config["hub_path"],
+        dataset_config.get("subset"),
+        **dataset_kwargs,
+    )
     train_split = dataset_config["train_split"]
     eval_split = dataset_config.get("eval_split", dataset_config["validation_split"])
     eval_shuffle_seed = dataset_config.get("eval_shuffle_seed", seed)
@@ -150,6 +158,23 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
             raise ValueError("eval_offset must select at least one evaluation example")
         validation = validation.select(range(eval_offset, eval_end))
         train = raw[train_split]
+    if len(validation) != eval_examples:
+        raise ValueError(
+            f"requested {eval_examples} evaluation examples, selected {len(validation)}"
+        )
+    label_count = len(_label_texts(dataset_config))
+    _validate_dataset_labels(
+        validation,
+        label_column=dataset_config["label_column"],
+        label_count=label_count,
+        split_name="evaluation",
+    )
+    _validate_dataset_labels(
+        train,
+        label_column=dataset_config["label_column"],
+        label_count=label_count,
+        split_name="training",
+    )
     experiment = config["experiment"]
     calibration_gradient_examples = int(experiment.get("calibration_gradient_examples", 0))
     calibration_gate_examples = int(experiment.get("calibration_gate_examples", 0))
@@ -272,6 +297,9 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
     )
     start_time = time.perf_counter()
     event_rows: list[dict[str, Any]] = []
+    monitor_loss_by_version: dict[int, float] = {}
+    monitor_cache_hits = 0
+    harm_epsilon = float(experiment.get("harm_epsilon", 1e-6))
     rng = random.Random(seed)
 
     for event_index, event in enumerate(trace.records):
@@ -631,21 +659,27 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         current_monitor_loss = float("nan")
         accepted_monitor_loss = float("nan")
         if monitor is not None:
-            load_compact_adapter_state(
-                model,
-                current_state,
-                active_rank=experiment["server_max_rank"],
-                initialize_free_directions=False,
+            current_monitor_loss = monitor_loss_by_version.get(
+                event.arrival_version, float("nan")
             )
-            current_monitor_loss = _mean_classification_loss(
-                model,
-                tokenizer,
-                monitor,
-                dataset_config=dataset_config,
-                max_length=config["model"]["max_length"],
-                batch_size=experiment["eval_batch_size"],
-                objective=str(experiment.get("monitor_objective", "label_nll")),
-            )
+            if math.isfinite(current_monitor_loss):
+                monitor_cache_hits += 1
+            if not math.isfinite(current_monitor_loss):
+                load_compact_adapter_state(
+                    model,
+                    current_state,
+                    active_rank=experiment["server_max_rank"],
+                    initialize_free_directions=False,
+                )
+                current_monitor_loss = _mean_classification_loss(
+                    model,
+                    tokenizer,
+                    monitor,
+                    dataset_config=dataset_config,
+                    max_length=config["model"]["max_length"],
+                    batch_size=experiment["eval_batch_size"],
+                    objective=str(experiment.get("monitor_objective", "label_nll")),
+                )
             load_compact_adapter_state(
                 model,
                 next_state,
@@ -661,6 +695,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                 batch_size=experiment["eval_batch_size"],
                 objective=str(experiment.get("monitor_objective", "label_nll")),
             )
+            monitor_loss_by_version[event.new_server_version] = accepted_monitor_loss
 
         update_accepted = int(any(scale > 0.0 for scale in accepted_scales))
         server_state = _state_to_cpu(next_state)
@@ -686,21 +721,21 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                 "accepted_loss": accepted_monitor_loss,
                 "update_accepted": update_accepted,
                 "harmful_update": (
-                    accepted_monitor_loss > current_monitor_loss + 1e-12
+                    accepted_monitor_loss > current_monitor_loss + harm_epsilon
                     if math.isfinite(current_monitor_loss)
                     and math.isfinite(accepted_monitor_loss)
                     else False
                 ),
                 "late_harmful_update": (
                     event.staleness >= int(experiment.get("late_tau", 8))
-                    and accepted_monitor_loss > current_monitor_loss + 1e-12
+                    and accepted_monitor_loss > current_monitor_loss + harm_epsilon
                     if math.isfinite(current_monitor_loss)
                     and math.isfinite(accepted_monitor_loss)
                     else False
                 ),
                 "extreme_harmful_update": (
                     event.staleness >= int(experiment.get("extreme_tau", 16))
-                    and accepted_monitor_loss > current_monitor_loss + 1e-12
+                    and accepted_monitor_loss > current_monitor_loss + harm_epsilon
                     if math.isfinite(current_monitor_loss)
                     and math.isfinite(accepted_monitor_loss)
                     else False
@@ -762,6 +797,15 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         for row in measured_rows
         if row["staleness"] >= extreme_tau
     ]
+    all_deltas = [
+        row["accepted_loss"] - row["current_loss"] for row in measured_rows
+    ]
+    meaningful_late_harm = [
+        delta if delta > harm_epsilon else 0.0 for delta in late_deltas
+    ]
+    meaningful_extreme_harm = [
+        delta if delta > harm_epsilon else 0.0 for delta in extreme_deltas
+    ]
     accepted_rows = [row for row in measured_rows if row["update_accepted"]]
     accepted_utilities = [
         row["current_loss"] - row["accepted_loss"] for row in accepted_rows
@@ -806,6 +850,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
     )
     metrics = {
         "baseline_accuracy": baseline["accuracy"],
+        "eval_example_count": len(validation),
         "baseline_balanced_accuracy": baseline["balanced_accuracy"],
         "baseline_brier": baseline["brier"],
         "baseline_nll": baseline["nll"],
@@ -872,19 +917,21 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         "measured_return_counts": measured_return_counts,
         "measured_accept_counts": measured_accept_counts,
         "late_event_count": len(late_deltas),
-        "cumulative_late_harm": sum(max(delta, 0.0) for delta in late_deltas),
+        "cumulative_late_harm": sum(meaningful_late_harm),
         "normalized_cumulative_late_harm": _mean(
-            [max(delta, 0.0) for delta in late_deltas]
+            meaningful_late_harm
         ),
-        "worst_step_loss_increase": max(late_deltas, default=0.0),
+        "harm_epsilon": float(experiment.get("harm_epsilon", 1e-6)),
+        "worst_step_loss_increase": max([0.0, *all_deltas]),
+        "worst_late_step_loss_increase": max([0.0, *late_deltas]),
         "extreme_event_count": len(extreme_deltas),
         "cumulative_extreme_harm": sum(
-            max(delta, 0.0) for delta in extreme_deltas
+            meaningful_extreme_harm
         ),
         "normalized_cumulative_extreme_harm": _mean(
-            [max(delta, 0.0) for delta in extreme_deltas]
+            meaningful_extreme_harm
         ),
-        "worst_extreme_loss_increase": max(extreme_deltas, default=0.0),
+        "worst_extreme_loss_increase": max([0.0, *extreme_deltas]),
         "utility_per_accepted_update": _mean(accepted_utilities),
         "utility_per_returned_update": _mean(returned_utilities),
         "cumulative_monitor_utility": sum(returned_utilities),
@@ -934,9 +981,10 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         ),
         "runtime_seconds": runtime,
         "peak_cuda_memory_gib": peak_memory,
+        "monitor_cache_hits": monitor_cache_hits,
     }
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "method": method,
         "seed": seed,
         "model": config["model"]["name"],
@@ -972,7 +1020,12 @@ def _load_model(config: Mapping[str, Any]):
 
     model_config = config["model"]
     experiment = config["experiment"]
-    tokenizer = AutoTokenizer.from_pretrained(model_config["name"], use_fast=True)
+    model_revision = model_config.get("revision")
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_config["name"],
+        use_fast=True,
+        revision=model_revision,
+    )
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
@@ -988,7 +1041,11 @@ def _load_model(config: Mapping[str, Any]):
             bnb_4bit_compute_dtype=torch.float16,
             bnb_4bit_use_double_quant=True,
         )
-    model = AutoModelForCausalLM.from_pretrained(model_config["name"], **kwargs)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_config["name"],
+        revision=model_revision,
+        **kwargs,
+    )
     if model_config["load_in_4bit"]:
         model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
     elif torch.cuda.is_available():
@@ -2134,6 +2191,26 @@ def _label_histogram(labels: Sequence[int | str]) -> dict[str, int]:
     return dict(sorted(histogram.items()))
 
 
+def _validate_dataset_labels(
+    dataset,
+    *,
+    label_column: str,
+    label_count: int,
+    split_name: str,
+) -> None:
+    invalid = sorted(
+        {
+            int(value)
+            for value in dataset[label_column]
+            if int(value) < 0 or int(value) >= label_count
+        }
+    )
+    if invalid:
+        raise ValueError(
+            f"{split_name} split has labels outside [0, {label_count - 1}]: {invalid}"
+        )
+
+
 def _dataset_label_histogram(dataset, label_column: str) -> dict[str, int]:
     if dataset is None:
         return {}
@@ -2179,6 +2256,12 @@ def _apply_overrides(config: dict[str, Any], args: argparse.Namespace) -> None:
         config["output_dir"] = str(args.output_dir)
     if args.model_name is not None:
         config["model"]["name"] = args.model_name
+        if args.model_revision is not None:
+            config["model"]["revision"] = args.model_revision
+        else:
+            config["model"].pop("revision", None)
+    elif args.model_revision is not None:
+        raise ValueError("--model-revision requires --model-name")
     if args.collected_returns is not None:
         config["experiment"]["collected_returns"] = args.collected_returns
     if args.local_steps is not None:
@@ -2272,6 +2355,9 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
         )
     if int(experiment.get("monitor_examples", 0)) <= 0:
         raise ValueError("monitor_examples must be positive to compute harmful metrics")
+    harm_epsilon = float(experiment.get("harm_epsilon", 1e-6))
+    if not math.isfinite(harm_epsilon) or harm_epsilon < 0.0:
+        raise ValueError("harm_epsilon must be finite and non-negative")
     if method in {"rift", "rift_core", "rift_diag", "spectral_filter"} and int(
         experiment.get("calibration_gradient_examples", 0)
     ) <= 0:

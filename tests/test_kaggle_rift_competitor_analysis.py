@@ -221,6 +221,46 @@ def test_reject_heavy_opponent_fails_absolute_safety_budget() -> None:
     assert verdict["hard_slice_checks"][0]["absolute_safety_budget"] is False
 
 
+def test_zero_harm_floor_allows_a_safe_tie() -> None:
+    paired = pd.DataFrame(
+        [
+            {
+                "task": "sst2",
+                "regime": "noniid_high_staleness",
+                "method": "spectral_filter",
+                "paired_seeds": 6,
+                "target_acceptance_rate": 1.0,
+                "target_accuracy_gain_pp": 1.0,
+                "target_accuracy_gain_ci95_low": 0.1,
+                "target_nll_reduction": 0.01,
+                "target_nll_reduction_ci95_low": 0.001,
+                "target_late_harmful_reduction": 0.0,
+                "target_late_harmful_reduction_ci95_low": 0.0,
+                "target_late_harmful_rate": 0.0,
+                "opponent_late_harmful_rate": 0.0,
+                "target_cumulative_late_harm_reduction": 0.0,
+                "target_cumulative_late_harm_reduction_ci95_low": 0.0,
+                "target_cumulative_late_harm": 0.0,
+                "opponent_cumulative_late_harm": 0.0,
+                "target_client_return_coverage": 1.0,
+                "target_late_event_count": 8.0,
+            }
+        ]
+    )
+    gate = dict(MODULE.DEFAULT_WEEK8_GATE)
+    gate.update(
+        {
+            "allow_equal_at_zero_harm": True,
+            "quality_superiority": "ci95_any",
+        }
+    )
+
+    verdict = MODULE.week8_verdict(paired, gate=gate)
+
+    assert verdict["status"] == "GO"
+    assert verdict["hard_slice_checks"][0]["late_harm_improved"] is True
+
+
 def test_kaggle_rift_completeness_detects_missing_task_and_method() -> None:
     frame = pd.DataFrame(
         [{

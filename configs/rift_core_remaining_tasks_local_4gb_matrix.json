@@ -1,7 +1,7 @@
 {
-  "name": "rift-core-remaining-tasks-local-4gb-development-v1",
-  "required_schema_version": 4,
-  "description": "Complete RIFT-Core development coverage on SST-2 and MNLI mismatched without repeating finished QNLI or MNLI matched runs.",
+  "name": "rift-core-remaining-tasks-local-4gb-development-v2",
+  "required_schema_version": 5,
+  "description": "Expanded local development coverage on SST-2 and MNLI mismatched with corrected safety metrics.",
   "runner": {
     "script": "scripts/run_kaggle_3b.py",
     "buffer_size": 1,
@@ -19,6 +19,7 @@
     "component_score_objective": "class_nll",
     "calibration_gate_objective": "class_nll",
     "monitor_objective": "class_nll",
+    "harm_epsilon": 0.000001,
     "rift_component_gain_mass": 1,
     "rift_gate_min_staleness": 4,
     "rift_gate_selection": "largest_safe_scale",
@@ -44,11 +45,11 @@
       "validation_split": "validation",
       "text_column": "sentence",
       "label_texts": [" negative", " positive"],
-      "eval_offset": 512,
+      "eval_offset": 0,
       "base_config": "configs/local_1_5b_rift_development.json",
       "label_column": "label",
       "max_train_examples": 512,
-      "eval_examples": 96,
+      "eval_examples": 512,
       "model_overrides": {
         "max_length": 192
       }
@@ -67,7 +68,7 @@
       "base_config": "configs/local_1_5b_rift_development.json",
       "label_column": "label",
       "max_train_examples": 512,
-      "eval_examples": 96,
+      "eval_examples": 512,
       "model_overrides": {
         "max_length": 128
       }
@@ -90,9 +91,10 @@
   ],
   "seeds": [5101, 5102, 5103],
   "notes": [
-    "Development only. QNLI and MNLI matched are omitted because their matching cohorts are already complete.",
+    "Development only. QNLI and MNLI matched are omitted here; use rift_core_development_matrix.json for one same-commit scaled cohort across all tasks.",
     "SST-2 preserves the planned max_length 192; MNLI mismatched uses max_length 128 because the matched split OOMed at 192 on the local 4 GiB GPU.",
     "Every method within a task shares data, schedule, local compute and model settings; core methods additionally use server calibration gradients and must report runtime.",
+    "The old 96-example v1 artifacts are preserved but do not satisfy this v2 matrix fingerprint/schema.",
     "Do not use these development seeds or evaluation windows for the final held-out verdict."
   ]
 }

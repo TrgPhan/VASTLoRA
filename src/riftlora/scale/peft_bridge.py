@@ -180,6 +180,9 @@ def fedrot_aggregate_factor_state(
         if max_rank > client.a.shape[0]:
             raise ValueError(f"max_rank={max_rank} exceeds available LoRA rank for {name}")
 
+        # Match the asymmetric factorization used by
+        # load_compact_adapter_state.  Mixing this with sqrt-balanced factors
+        # changes the represented update even when the client did no work.
         server_b, server_a = _compact_to_lora_factors(
             compact,
             rank=max_rank,
@@ -244,9 +247,10 @@ def _compact_to_lora_factors(
     a = torch.zeros((rank, columns), dtype=compact.u.dtype, device=compact.u.device)
     represented = min(compact.rank, rank)
     if represented:
-        root = compact.s[:represented].sqrt()
-        b[:, :represented] = compact.u[:, :represented] * root.unsqueeze(0)
-        a[:represented, :] = root.unsqueeze(1) * compact.v[:, :represented].T / scaling
+        b[:, :represented] = (
+            compact.u[:, :represented] * compact.s[:represented].unsqueeze(0)
+        )
+        a[:represented, :] = compact.v[:, :represented].T / scaling
     return b, a
 
 

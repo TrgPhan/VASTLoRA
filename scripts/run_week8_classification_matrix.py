@@ -28,6 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", action="append", type=int)
     parser.add_argument("--eval-offset", type=int)
     parser.add_argument("--model-name", help="Override backbone for every selected task; use a separate output root")
+    parser.add_argument("--model-revision", help="Optional immutable revision for --model-name")
     parser.add_argument(
         "--output-root",
         type=Path,
@@ -75,6 +76,12 @@ def main() -> None:
                     config = _build_config(base, task, regime, matrix)
                     if args.model_name:
                         config["model"]["name"] = args.model_name
+                        if args.model_revision:
+                            config["model"]["revision"] = args.model_revision
+                        else:
+                            config["model"].pop("revision", None)
+                    elif args.model_revision:
+                        raise ValueError("--model-revision requires --model-name")
                     if args.eval_offset is not None:
                         config["dataset"]["eval_offset"] = args.eval_offset
                     config["provenance"] = {
@@ -229,6 +236,7 @@ def _completed_result_matches(
         return False
     required_schema = int(matrix.get("required_schema_version", 3))
     provenance = payload.get("provenance", {})
+    expected_commit = _runner_git_commit()
     return (
         int(payload.get("schema_version", 0)) >= required_schema
         and payload.get("method") == method
@@ -236,6 +244,7 @@ def _completed_result_matches(
         and provenance.get("matrix_sha256")
         == config.get("provenance", {}).get("matrix_sha256")
         and payload.get("config_fingerprint") == _runner_config_fingerprint(config)
+        and payload.get("git_commit") == expected_commit
         and payload.get("git_worktree_dirty") is False
     )
 
@@ -245,6 +254,20 @@ def _runner_config_fingerprint(config: dict[str, Any]) -> str:
     if _RUNNER_MODULE is None:
         _validate_generated_config(config, "raw")
     return str(_RUNNER_MODULE._config_fingerprint(config))
+
+
+def _runner_git_commit() -> str:
+    if _RUNNER_MODULE is not None and hasattr(_RUNNER_MODULE, "_git_commit"):
+        return str(_RUNNER_MODULE._git_commit())
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
 
 
 if __name__ == "__main__":

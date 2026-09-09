@@ -1,7 +1,7 @@
 {
-  "name": "rift-core-development-v1",
-  "required_schema_version": 4,
-  "description": "Exploratory full-core versus diagonal calibration repair. Not a held-out verdict.",
+  "name": "rift-core-scaled-development-v2",
+  "required_schema_version": 5,
+  "description": "Expanded development matrix with stronger baselines, larger evaluation sets and corrected safety metrics.",
   "runner": {
     "script": "scripts/run_kaggle_3b.py",
     "buffer_size": 1,
@@ -19,6 +19,7 @@
     "component_score_objective": "class_nll",
     "calibration_gate_objective": "class_nll",
     "monitor_objective": "class_nll",
+    "harm_epsilon": 0.000001,
     "rift_component_gain_mass": 1,
     "rift_gate_min_staleness": 4,
     "rift_gate_selection": "largest_safe_scale",
@@ -51,11 +52,11 @@
         " negative",
         " positive"
       ],
-      "eval_offset": 512,
+      "eval_offset": 0,
       "base_config": "configs/local_1_5b_rift_development.json",
       "label_column": "label",
       "max_train_examples": 512,
-      "eval_examples": 96,
+      "eval_examples": 512,
       "model_overrides": {
         "max_length": 192
       }
@@ -75,7 +76,7 @@
       "base_config": "configs/local_1_5b_rift_development.json",
       "label_column": "label",
       "max_train_examples": 512,
-      "eval_examples": 96,
+      "eval_examples": 512,
       "model_overrides": {
         "max_length": 192
       }
@@ -98,9 +99,9 @@
       "base_config": "configs/local_1_5b_rift_development.json",
       "label_column": "label",
       "max_train_examples": 512,
-      "eval_examples": 96,
+      "eval_examples": 512,
       "model_overrides": {
-        "max_length": 192
+        "max_length": 128
       }
     },
     {
@@ -121,9 +122,9 @@
       "base_config": "configs/local_1_5b_rift_development.json",
       "label_column": "label",
       "max_train_examples": 512,
-      "eval_examples": 96,
+      "eval_examples": 512,
       "model_overrides": {
-        "max_length": 192
+        "max_length": 128
       }
     }
   ],
@@ -162,6 +163,9 @@
     }
   ],
   "methods": [
+    "raw",
+    "freshness",
+    "fedrot",
     "spectral_filter",
     "alignfed_calibration",
     "rift",
@@ -176,7 +180,9 @@
   "notes": [
     "All methods share train, calibration, eval examples, schedules and local compute. Core methods use extra server gradients: report cost.",
     "RIFT here is a gate-only filter reference without high-gain rescue, not the earlier positive-filter-rescue candidate.",
-    "SST-2 offset512 is reused development. QNLI/MNLI offset1024 is development, never a future confirmation split.",
+    "SST-2 uses 512 validation examples for development. QNLI/MNLI use 512 examples from offset1024; none overlap the confirmation windows.",
+    "Raw and freshness are async references. FedRot is included after the factor-convention no-op fix; it is a matched simulator port.",
+    "RIFT-Diag has the same repair steps, data and gate as RIFT-Core and is required to isolate the value of off-diagonal core terms.",
     "Full and diagonal repair both fit on gradient split then select rank-projected states on gate split; monitor/eval never used for selection."
   ]
 }

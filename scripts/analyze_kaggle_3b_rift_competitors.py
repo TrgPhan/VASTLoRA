@@ -364,6 +364,15 @@ def summarize(frame: pd.DataFrame) -> pd.DataFrame:
                 "worst_step_loss_increase_mean": float(
                     group.get("worst_step_loss_increase", pd.Series([float("nan")])).mean()
                 ),
+                "worst_late_step_loss_increase_mean": float(
+                    group.get(
+                        "worst_late_step_loss_increase",
+                        group.get(
+                            "worst_step_loss_increase",
+                            pd.Series([float("nan")]),
+                        ),
+                    ).mean()
+                ),
                 "utility_per_accepted_update_mean": float(
                     group.get(
                         "utility_per_accepted_update", pd.Series([float("nan")])
@@ -466,6 +475,22 @@ def paired_against(frame: pd.DataFrame, target: str) -> pd.DataFrame:
             joined.get("worst_step_loss_increase_candidate", pd.Series(0.0, index=joined.index))
             - joined.get("worst_step_loss_increase_target", pd.Series(0.0, index=joined.index))
         )
+        worst_late_step_delta = (
+            joined.get(
+                "worst_late_step_loss_increase_candidate",
+                joined.get(
+                    "worst_step_loss_increase_candidate",
+                    pd.Series(0.0, index=joined.index),
+                ),
+            )
+            - joined.get(
+                "worst_late_step_loss_increase_target",
+                joined.get(
+                    "worst_step_loss_increase_target",
+                    pd.Series(0.0, index=joined.index),
+                ),
+            )
+        )
         acc_mean, acc_low, acc_high = mean_ci95(accuracy_delta)
         balanced_mean, balanced_low, balanced_high = mean_ci95(
             balanced_accuracy_delta
@@ -481,6 +506,9 @@ def paired_against(frame: pd.DataFrame, target: str) -> pd.DataFrame:
             normalized_late_harm_delta
         )
         worst_mean, worst_low, worst_high = mean_ci95(worst_step_delta)
+        worst_late_mean, worst_late_low, worst_late_high = mean_ci95(
+            worst_late_step_delta
+        )
         target_acceptance_rate = (
             float(joined["acceptance_rate_target"].mean())
             if "acceptance_rate_target" in joined
@@ -540,6 +568,12 @@ def paired_against(frame: pd.DataFrame, target: str) -> pd.DataFrame:
                 "target_late_harmful_reduction": late_mean,
                 "target_late_harmful_reduction_ci95_low": late_low,
                 "target_late_harmful_reduction_ci95_high": late_high,
+                "target_late_harmful_rate": float(
+                    joined["late_harmful_update_rate_target"].mean()
+                ),
+                "opponent_late_harmful_rate": float(
+                    joined["late_harmful_update_rate_candidate"].mean()
+                ),
                 "target_cumulative_late_harm_reduction": cumulative_mean,
                 "target_cumulative_late_harm_reduction_ci95_low": cumulative_low,
                 "target_cumulative_late_harm_reduction_ci95_high": cumulative_high,
@@ -549,6 +583,9 @@ def paired_against(frame: pd.DataFrame, target: str) -> pd.DataFrame:
                 "target_worst_step_harm_reduction": worst_mean,
                 "target_worst_step_harm_reduction_ci95_low": worst_low,
                 "target_worst_step_harm_reduction_ci95_high": worst_high,
+                "target_worst_late_step_harm_reduction": worst_late_mean,
+                "target_worst_late_step_harm_reduction_ci95_low": worst_late_low,
+                "target_worst_late_step_harm_reduction_ci95_high": worst_late_high,
                 "target_acceptance_rate": target_acceptance_rate,
                 "opponent_acceptance_rate": opponent_acceptance_rate,
                 "target_acceptance_gain_pp": acceptance_mean,
@@ -584,6 +621,16 @@ def paired_against(frame: pd.DataFrame, target: str) -> pd.DataFrame:
                 "target_worst_step_loss_increase": (
                     float(joined["worst_step_loss_increase_target"].mean())
                     if "worst_step_loss_increase_target" in joined
+                    else float("nan")
+                ),
+                "opponent_cumulative_late_harm": (
+                    float(joined["cumulative_late_harm_candidate"].mean())
+                    if "cumulative_late_harm_candidate" in joined
+                    else float("nan")
+                ),
+                "target_worst_late_step_loss_increase": (
+                    float(joined["worst_late_step_loss_increase_target"].mean())
+                    if "worst_late_step_loss_increase_target" in joined
                     else float("nan")
                 ),
             }
@@ -650,6 +697,13 @@ def week8_verdict(
             late_harm_ok = late_harm_ok and float(
                 row["target_late_harmful_reduction_ci95_low"]
             ) >= 0.0
+            if bool(row_gate.get("allow_equal_at_zero_harm", False)):
+                late_harm_ok = late_harm_ok or (
+                    float(row.get("opponent_late_harmful_rate", float("nan")))
+                    == 0.0
+                    and float(row.get("target_late_harmful_rate", float("nan")))
+                    == 0.0
+                )
         cumulative_harm_ok = True
         if row_gate.get("requires_positive_cumulative_late_harm_reduction", False):
             cumulative_harm_ok = float(
@@ -658,6 +712,15 @@ def week8_verdict(
             cumulative_harm_ok = cumulative_harm_ok and float(
                 row.get("target_cumulative_late_harm_reduction_ci95_low", 0.0)
             ) >= 0.0
+            if bool(row_gate.get("allow_equal_at_zero_harm", False)):
+                cumulative_harm_ok = cumulative_harm_ok or (
+                    float(
+                        row.get("opponent_cumulative_late_harm", float("nan"))
+                    )
+                    == 0.0
+                    and float(row.get("target_cumulative_late_harm", float("nan")))
+                    == 0.0
+                )
 
         quality_mode = str(row_gate.get("quality_superiority", "none"))
         if quality_mode == "none":

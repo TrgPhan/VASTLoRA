@@ -332,6 +332,23 @@ def test_label_histogram_is_stable_and_string_keyed() -> None:
     }
 
 
+def test_dataset_label_validation_rejects_unlabeled_test_split() -> None:
+    MODULE._validate_dataset_labels(
+        {"label": [0, 1, 0]},
+        label_column="label",
+        label_count=2,
+        split_name="evaluation",
+    )
+
+    with pytest.raises(ValueError, match="outside"):
+        MODULE._validate_dataset_labels(
+            {"label": [0, -1, 1]},
+            label_column="label",
+            label_count=2,
+            split_name="evaluation",
+        )
+
+
 def test_pair_task_truncation_preserves_prompt_head_and_tail() -> None:
     prompt = list(range(10))
 

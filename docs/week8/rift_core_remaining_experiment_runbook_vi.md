@@ -1,133 +1,102 @@
-# RIFT-Core: runbook cho cac experiment con lai
+# RIFT-Core v2: scaled development va held-out runbook
 
-## Trang thai va pham vi
+## Trang thai
 
-Development da hoan tat cho QNLI va MNLI-m tren seeds 5101-5103. Khong chay
-lai hai cohort nay. Matrix development moi chi bo sung hai task con thieu:
+Cac artifact v1 voi 96 eval examples van la exploratory evidence. Khong tron
+chung vao cohort v2 vi schema, code, matrix va eval sample count khac nhau.
+V2 sua FedRot factor convention, tach worst all/late-step harm, dung
+`harm_epsilon=1e-6`, pin model/dataset revision va chi resume result tu dung
+Git commit. Monitor loss cua cung server version duoc cache de bo forward lap.
 
-- SST-2, development offset 512, 96 eval examples, max length 192.
-- MNLI-mm, development offset 1024, 96 eval examples, max length 128.
+## Hai matrix chinh
 
-Ca hai task chay Spectral Filter, AlignFed calibration, RIFT gate-only,
-RIFT-Diag va RIFT-Core tren cung non-IID + high-staleness schedule. Day la
-development evidence, khong phai held-out verdict.
+- `configs/rift_core_development_matrix.json`: 4 tasks, 2 regimes, 8 methods,
+  3 seeds = 192 jobs. SST-2 va moi NLI slice dung 512 eval examples.
+- `configs/rift_core_heldout_confirmation_matrix.json`: 4 tasks, hard regime,
+  8 methods, 6 seeds = 192 jobs. Moi task dung 1024 eval examples.
 
-Sau khi development du bon task, matrix confirmation rieng se chay SST-2,
-QNLI, MNLI-m va MNLI-mm voi sau seed moi. Primary target la RIFT-Core. Controls
-gom FedRot, Spectral Filter, AlignFed calibration va RIFT gate-only.
-RIFT-Diag la ablation development, khong tham gia primary GO gate.
+Methods: raw, freshness, FedRot, Spectral Filter, whole-update calibration,
+RIFT gate-only, RIFT-Diag va RIFT-Core. RIFT-Diag co cung repair data, steps
+va gate, nen la control truc tiep cho gia tri cua off-diagonal full core.
 
-## File chay
+SST-2 confirmation dung 1024 train examples theo shuffle seed 271828 va
+offset4096. Runner loai chung khoi train truoc khi chon calibration, monitor
+va client data. Day la internal held-out, khong phai official GLUE validation.
+QNLI va MNLI m/mm dung 1024 validation examples tu shuffled offset2048, seed
+314159. Development va confirmation khong chong cua so theo tung split.
 
-- `configs/rift_core_remaining_tasks_local_4gb_matrix.json`: hai development
-  task con thieu, 30 jobs.
-- `configs/rift_core_heldout_confirmation_matrix.json`: bon held-out task,
-  120 jobs.
-- `scripts/run_week8_classification_matrix.py`: tao config tung job, validate,
-  skip artifact clean da hoan tat va chay runner.
-- `scripts/analyze_kaggle_3b_rift_competitors.py`: tong hop mean, best seed,
-  paired CI95, completeness va GO/NO-GO.
+## Preflight
 
-Khong sua `src/riftlora`, core hyperparameters, seed hoac held-out offset sau
-khi bat dau confirmation.
-
-## Preflight khong chay model
-
-Tu repo root:
+Chay tu clean committed worktree. Sau khi sua implementation, result tu commit
+cu se khong duoc skip.
 
 ```powershell
-python -m pytest tests/test_rift_core_experiment_matrices.py tests/test_week8_matrix_runner.py tests/test_kaggle_3b_tasks.py -q
-python scripts/run_week8_classification_matrix.py --matrix configs/rift_core_remaining_tasks_local_4gb_matrix.json --output-root outputs/rift_core_remaining_dev_1_5b_4gb --dry-run
-python scripts/run_week8_classification_matrix.py --matrix configs/rift_core_heldout_confirmation_matrix.json --output-root outputs/rift_core_confirmation_1_5b_4gb --dry-run
+python -m pytest tests/test_rift_core_experiment_matrices.py tests/test_week8_matrix_runner.py tests/test_kaggle_3b_tasks.py tests/test_peft_bridge.py tests/test_kaggle_rift_competitor_analysis.py -q
+python scripts/run_week8_classification_matrix.py --matrix configs/rift_core_development_matrix.json --output-root outputs/rift_core_scaled_dev_v2_1_5b --dry-run
+python scripts/run_week8_classification_matrix.py --matrix configs/rift_core_heldout_confirmation_matrix.json --output-root outputs/rift_core_confirmation_v2_1_5b --dry-run
 ```
 
-Dry-run phai liet ke 30 development jobs va 120 confirmation jobs, hoac
-`skip completed` neu artifact trung fingerprint va den tu clean worktree.
-
-## Chay development con lai
-
-Chay tung task de de resume:
+Neu override backbone 3B, dung output root rieng. Co the pin exact revision:
 
 ```powershell
-python scripts/run_week8_classification_matrix.py --matrix configs/rift_core_remaining_tasks_local_4gb_matrix.json --task sst2 --regime noniid_high_staleness --output-root outputs/rift_core_remaining_dev_1_5b_4gb
-python scripts/run_week8_classification_matrix.py --matrix configs/rift_core_remaining_tasks_local_4gb_matrix.json --task mnli_mm --regime noniid_high_staleness --output-root outputs/rift_core_remaining_dev_1_5b_4gb
+python scripts/run_week8_classification_matrix.py --matrix configs/rift_core_development_matrix.json --model-name Qwen/Qwen2.5-3B-Instruct --model-revision <COMMIT_SHA> --output-root outputs/rift_core_scaled_dev_v2_3b --dry-run
 ```
 
-Chay lai cung lenh de resume; runner tu skip result clean dung schema, matrix
-fingerprint va config fingerprint. Khong dung `--force` neu khong co ly do da
-ghi lai. Neu can chay mot job de kiem tra GPU truoc:
+Neu khong truyen `--model-revision`, runner bo revision 1.5B ke thua de tranh
+dung nham commit hash cho model 3B.
+
+## Chay development
+
+Bat dau voi hard slice. Chay lai cung command de resume; khong dung `--force`.
 
 ```powershell
-python scripts/run_week8_classification_matrix.py --matrix configs/rift_core_remaining_tasks_local_4gb_matrix.json --task sst2 --regime noniid_high_staleness --method rift_core --seed 5101 --output-root outputs/rift_core_remaining_dev_1_5b_4gb
+python scripts/run_week8_classification_matrix.py --matrix configs/rift_core_development_matrix.json --task sst2 --regime noniid_high_staleness --output-root outputs/rift_core_scaled_dev_v2_1_5b
+python scripts/run_week8_classification_matrix.py --matrix configs/rift_core_development_matrix.json --task qnli --regime noniid_high_staleness --output-root outputs/rift_core_scaled_dev_v2_1_5b
+python scripts/run_week8_classification_matrix.py --matrix configs/rift_core_development_matrix.json --task mnli_m --regime noniid_high_staleness --output-root outputs/rift_core_scaled_dev_v2_1_5b
+python scripts/run_week8_classification_matrix.py --matrix configs/rift_core_development_matrix.json --task mnli_mm --regime noniid_high_staleness --output-root outputs/rift_core_scaled_dev_v2_1_5b
 ```
 
-Job don nay van la mot phan cua cohort chinh; sau do chay lenh full task de bo
-sung cac method/seed con lai.
+Sau hard slice, chay `--regime iid_homogeneous`. Day la control de biet gain
+den tu high-staleness/non-IID hay chi la server calibration noi chung.
 
-## Phan tich development
-
-Analyzer se bao incomplete neu moi chay mot phan matrix. Chi dung verdict sau
-khi du 30 jobs:
+Phan tich chi khi cohort da chon co du method/seed:
 
 ```powershell
-python scripts/analyze_kaggle_3b_rift_competitors.py --input-dir outputs/rift_core_remaining_dev_1_5b_4gb --output-dir outputs/rift_core_remaining_dev_1_5b_4gb_analysis --matrix configs/rift_core_remaining_tasks_local_4gb_matrix.json --target rift_core
+python scripts/analyze_kaggle_3b_rift_competitors.py --input-dir outputs/rift_core_scaled_dev_v2_1_5b --output-dir outputs/rift_core_scaled_dev_v2_1_5b_analysis --matrix configs/rift_core_development_matrix.json --target rift_core
 ```
 
-Ghep bao cao nay voi hai artifact da co cho QNLI va MNLI-m. Khong ghep raw
-result vao cung input analyzer vi chung den tu matrix fingerprint khac nhau.
+## Chay held-out
 
-## Chay held-out confirmation
-
-Chi bat dau sau khi commit dang chay la clean va khong con tune Core. Thu tu
-task chi de quan ly tai nguyen, khong mang y nghia chon task dep:
+Chi chay sau khi config/Core da freeze va commit. Khong tune theo bat ky seed
+6101-6106 nao, khong bo seed sau khi xem ket qua.
 
 ```powershell
-git status --short
-python scripts/run_week8_classification_matrix.py --matrix configs/rift_core_heldout_confirmation_matrix.json --task sst2 --output-root outputs/rift_core_confirmation_1_5b_4gb
-python scripts/run_week8_classification_matrix.py --matrix configs/rift_core_heldout_confirmation_matrix.json --task qnli --output-root outputs/rift_core_confirmation_1_5b_4gb
-python scripts/run_week8_classification_matrix.py --matrix configs/rift_core_heldout_confirmation_matrix.json --task mnli_m --output-root outputs/rift_core_confirmation_1_5b_4gb
-python scripts/run_week8_classification_matrix.py --matrix configs/rift_core_heldout_confirmation_matrix.json --task mnli_mm --output-root outputs/rift_core_confirmation_1_5b_4gb
+python scripts/run_week8_classification_matrix.py --matrix configs/rift_core_heldout_confirmation_matrix.json --task sst2 --output-root outputs/rift_core_confirmation_v2_1_5b
+python scripts/run_week8_classification_matrix.py --matrix configs/rift_core_heldout_confirmation_matrix.json --task qnli --output-root outputs/rift_core_confirmation_v2_1_5b
+python scripts/run_week8_classification_matrix.py --matrix configs/rift_core_heldout_confirmation_matrix.json --task mnli_m --output-root outputs/rift_core_confirmation_v2_1_5b
+python scripts/run_week8_classification_matrix.py --matrix configs/rift_core_heldout_confirmation_matrix.json --task mnli_mm --output-root outputs/rift_core_confirmation_v2_1_5b
 ```
-
-SST-2 dung 168 mau con lai tu shuffled offset 704. QNLI va hai MNLI split
-dung 512 mau tu offset 1536. Tat ca dung fixed `eval_shuffle_seed=314159` tu
-base config. Seeds 6101-6106 co trong so bang nhau; khong loai seed dua tren
-ket qua.
-
-Phan tich sau khi du 120 jobs:
 
 ```powershell
-python scripts/analyze_kaggle_3b_rift_competitors.py --input-dir outputs/rift_core_confirmation_1_5b_4gb --output-dir outputs/rift_core_confirmation_1_5b_4gb_analysis --matrix configs/rift_core_heldout_confirmation_matrix.json --target rift_core
+python scripts/analyze_kaggle_3b_rift_competitors.py --input-dir outputs/rift_core_confirmation_v2_1_5b --output-dir outputs/rift_core_confirmation_v2_1_5b_analysis --matrix configs/rift_core_heldout_confirmation_matrix.json --target rift_core
 ```
 
-## Metric va verdict
+## Cach doc ket qua
 
-Theo doi rieng tung task va paired seed:
+Primary quality la final Accuracy va class NLL, voi paired delta/CI95 tren
+tat ca seed. Best seed chi mo ta. Safety gom harmful rate, late harmful rate,
+cumulative late harm, normalized late harm, worst all-step va worst late-step
+loss increase. Luon ghi numerator/denominator late events, acceptance, return
+coverage tung client, runtime va memory.
 
-- Primary quality: final Accuracy va class NLL; bao cao mean, CI95, best va
-  worst seed. Best seed chi mo ta, khong dung lam verdict.
-- Safety: harmful, late harmful, cumulative late harm, normalized cumulative
-  late harm va worst-step loss increase.
-- Khong duoc reject de tao ket qua dep: acceptance phai >= 50%, client return
-  coverage = 100%, moi seed can it nhat 8 late events.
-- Cost: runtime, peak GPU memory, calibration gradient passes va accepted
-  update rank.
+V2 yeu cau `ci95_any`: RIFT-Core phai co CI95 improvement ve Accuracy hoac
+class NLL, dong thoi dat non-inferiority va safety gates da khoa. GO safety
+cho phep hoa khi ca RIFT va opponent deu co late harm/cumulative harm bang 0;
+neu opponent co harm thi van phai co reduction duong voi CI lower >= 0. GO
+safety khong tu dong la accuracy breakthrough. De claim full-core mixing co ich,
+Core phai vuot RIFT-Diag equal-budget control; neu khong, claim dung o muc
+server-calibrated diagonal repair.
 
-GO cua matrix confirmation yeu cau du job/provenance, sau paired seeds, quality
-khong thua qua margin da khoa, co it nhat mot point improvement ve Accuracy
-hoac class NLL, va safety tot hon external controls. So voi RIFT gate-only,
-GO gate tap trung vao quality vi day la internal ablation. Neu Accuracy hoac
-NLL fail non-inferiority tren hard slice thi ket luan la NO-GO; neu thieu job,
-dirty artifact hay khong du late event thi INCONCLUSIVE.
-
-## Prompt handoff de chay o luot sau
-
-```text
-Hay doc docs/week8/rift_core_remaining_experiment_runbook_vi.md. Kiem tra Git
-worktree va GPU, chay preflight, sau do resume matrix development con thieu.
-Khong chay lai QNLI/MNLI-m development da hoan tat, khong sua logic RIFT-Core,
-khong dung --force va khong chon seed. Khi du 30 jobs, analyze voi target
-rift_core va tong hop SST-2/MNLI-mm cung ket qua QNLI/MNLI-m cu. Chi neu bon
-task development hop le moi chay held-out confirmation da freeze; bao cao ba
-bang Accuracy, class NLL, Harmful/Late harmful kem paired CI95 va provenance.
-```
+`spectral_filter` va `alignfed_calibration` trong simulator la matched local
+controls, khong phai full official Spectral Surgery/AlignFed implementations.
+Bao cao dung fidelity nay trong thesis.

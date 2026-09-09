@@ -3,7 +3,7 @@
 import torch
 from torch import nn
 
-from riftlora.lowrank import LowRankMatrix, compact_svd
+from riftlora.lowrank import CompactSVD, LowRankMatrix, compact_svd
 from riftlora.scale import (
     FactorSnapshot,
     capture_factor_snapshot,
@@ -115,4 +115,28 @@ def test_fedrot_factor_aggregation_aligns_rotated_client() -> None:
         rtol=1e-5,
         atol=1e-5,
     )
+
+
+def test_fedrot_noop_client_preserves_server_for_partial_weight() -> None:
+    u = torch.tensor([[1.0], [0.0]])
+    v = torch.tensor([[1.0], [0.0]])
+    compact = CompactSVD(u, torch.tensor([4.0]), v)
+    client = {
+        "projection": FactorSnapshot(
+            a=v.T.clone(),
+            b=4.0 * u,
+            scaling=1.0,
+        )
+    }
+
+    aggregated = fedrot_aggregate_factor_state(
+        {"projection": compact},
+        client,
+        active_rank=1,
+        weight=0.5,
+        max_rank=1,
+        rank_rtol=1e-7,
+    )
+
+    torch.testing.assert_close(aggregated["projection"].dense(), compact.dense())
 

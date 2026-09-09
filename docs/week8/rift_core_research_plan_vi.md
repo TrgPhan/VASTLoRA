@@ -171,3 +171,11 @@ signal, chua phai held-out verdict. Xem chi tiet va provenance caveat tai
 MNLI-m max_length 192 OOM tai seed 5102 tren GPU 4 GiB. Local cohort dung
 matrix `configs/rift_core_mnli_local_4gb_matrix.json` voi max_length 128 cho
 tat ca methods. Khong tron artifact max_length 192 da chay voi cohort nay.
+
+MNLI-m local 4GB cohort da hoan thanh 15/15 runs trong clean worktree, tat ca
+result co `git_worktree_dirty=false`. RIFT-Core mean accuracy 74.31%, class NLL
+0.641033, harmful 2.08%, late harmful 0.00%; Spectral Filter mean accuracy
+65.97%, class NLL 0.769422, harmful 20.83%, late harmful 25.00%. RIFT gate-only
+gan nhu bang Spectral Filter, nen tin hieu nay ung ho viec Core repair moi la
+phan tao loi ich chinh. Xem chi tiet tai
+`docs/week8/rift_core_mnli_local_4gb_results_vi.md`.

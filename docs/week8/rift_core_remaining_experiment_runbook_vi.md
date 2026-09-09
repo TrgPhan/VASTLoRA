@@ -1,4 +1,4 @@
-# RIFT-Core v2: scaled development va held-out runbook
+# RIFT-Core v3: scaled development va held-out runbook
 
 ## Trang thai
 
@@ -97,6 +97,8 @@ safety khong tu dong la accuracy breakthrough. De claim full-core mixing co ich,
 Core phai vuot RIFT-Diag equal-budget control; neu khong, claim dung o muc
 server-calibrated diagonal repair.
 
-`spectral_filter` va `alignfed_calibration` trong simulator la matched local
-controls, khong phai full official Spectral Surgery/AlignFed implementations.
-Bao cao dung fidelity nay trong thesis.
+Confirmation v3 dung `spectral_surgery`, la paper-faithful spectral operator
+port nhung van la async adaptation tren q/v, khong phai post-hoc reproduction
+tren o/down. `alignfed_calibration` van chi la matched local control, khong
+phai full AlignFed. Xem fidelity va lenh confirmation da cap nhat tai
+`docs/week8/competitor_fidelity_confirmation_runbook_vi.md`.

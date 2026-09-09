@@ -38,8 +38,11 @@ from riftlora.scale import (
     filter_compact_by_scores,
     load_compact_adapter_state,
     mask_inactive_rank_gradients,
+    reweight_compact_spectra,
     scale_compact_update,
+    score_compact_component_sensitivities_microbatched,
     score_compact_components_microbatched,
+    SpectralSurgeryConfig,
     transport_compact_update,
 )
 from riftlora.scale.tradeoff import reserved_train_eval_indices
@@ -65,6 +68,7 @@ METHODS = (
     "rift_core",
     "rift_diag",
     "spectral_filter",
+    "spectral_surgery",
     "alignfed_calibration",
 )
 
@@ -357,12 +361,26 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         gate_mean_deltas: list[float] = []
         accepted_routes: list[str] = []
         if accepted_method == "fedrot":
+            fedrot_schedule = str(
+                experiment.get("fedrot_align_schedule", "fixed_b")
+            )
+            if fedrot_schedule == "alternating":
+                alignment_round = event.arrival_version + 1
+                fedrot_align_matrix = "a" if alignment_round % 2 else "b"
+            else:
+                fedrot_align_matrix = str(
+                    experiment.get("fedrot_align_matrix", "b")
+                )
             next_state = fedrot_aggregate_factor_state(
                 current_state,
                 after,
                 active_rank=active_rank,
                 weight=experiment["server_update_weight"],
                 max_rank=experiment["server_max_rank"],
+                align_matrix=fedrot_align_matrix,
+                rotation_lambda=float(
+                    experiment.get("fedrot_rotation_lambda", 1.0)
+                ),
                 rank_rtol=experiment["rank_rtol"],
             )
             freshness = math.exp(-transport_config.freshness_lambda * event.staleness)
@@ -372,10 +390,17 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
             left_ranks.append(experiment["server_max_rank"])
             right_ranks.append(experiment["server_max_rank"])
             accepted_scales.append(1.0)
-            accepted_routes.append("fedrot")
+            accepted_routes.append(f"fedrot_align_{fedrot_align_matrix}")
             for name in next_state:
                 histories[name].append(next_state[name])
-        elif accepted_method in {"rift", "rift_core", "rift_diag", "spectral_filter", "alignfed_calibration"}:
+        elif accepted_method in {
+            "rift",
+            "rift_core",
+            "rift_diag",
+            "spectral_filter",
+            "spectral_surgery",
+            "alignfed_calibration",
+        }:
             load_compact_adapter_state(
                 model,
                 current_state,
@@ -404,6 +429,50 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                 retained_ranks.append(sum(update.rank for update in accepted_updates.values()))
                 total_ranks.append(sum(update.rank for update in innovations.values()))
                 predicted_gains.append(float("nan"))
+            elif accepted_method == "spectral_surgery":
+                if gradient_batches is None:
+                    raise ValueError(
+                        "spectral_surgery requires calibration_gradient_examples"
+                    )
+                sensitivities = (
+                    score_compact_component_sensitivities_microbatched(
+                        model,
+                        innovations,
+                        gradient_batches,
+                        loss_fn=component_score_loss_fn,
+                    )
+                )
+                surgery_config = SpectralSurgeryConfig(
+                    **experiment.get("spectral_surgery", {})
+                )
+                edited = reweight_compact_spectra(
+                    innovations,
+                    sensitivities.sensitivities,
+                    config=surgery_config,
+                )
+                selected_rank = sum(update.rank for update in edited.values())
+                next_state = _aggregate_scaled_updates(
+                    current_state,
+                    edited,
+                    scale=1.0,
+                    experiment=experiment,
+                )
+                accepted_updates = edited
+                retained_ranks.append(selected_rank)
+                total_ranks.append(sensitivities.total_rank)
+                predicted_gains.append(float("nan"))
+                accepted_scales.append(1.0)
+                accepted_routes.append(
+                    f"spectral_surgery_{surgery_config.policy}"
+                )
+                flat_sensitivities = [
+                    value
+                    for layer_values in sensitivities.sensitivities.values()
+                    for value in layer_values.tolist()
+                ]
+                core_diagnostics["spectral_mean_abs_sensitivity"] = _mean(
+                    flat_sensitivities
+                )
             else:
                 if gradient_batches is None:
                     raise ValueError(f"{accepted_method} requires calibration_gradient_examples")
@@ -2358,10 +2427,37 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
     harm_epsilon = float(experiment.get("harm_epsilon", 1e-6))
     if not math.isfinite(harm_epsilon) or harm_epsilon < 0.0:
         raise ValueError("harm_epsilon must be finite and non-negative")
-    if method in {"rift", "rift_core", "rift_diag", "spectral_filter"} and int(
+    if method in {
+        "rift",
+        "rift_core",
+        "rift_diag",
+        "spectral_filter",
+        "spectral_surgery",
+    } and int(
         experiment.get("calibration_gradient_examples", 0)
     ) <= 0:
         raise ValueError(f"{method} requires calibration_gradient_examples > 0")
+    if method == "spectral_surgery":
+        SpectralSurgeryConfig(**experiment.get("spectral_surgery", {})).validate()
+        if int(experiment.get("calibration_gradient_batch_size", 1)) != 1:
+            raise ValueError(
+                "spectral_surgery requires calibration_gradient_batch_size=1 "
+                "for exact per-example mean-absolute sensitivity"
+            )
+    fedrot_schedule = str(experiment.get("fedrot_align_schedule", "fixed_b"))
+    if fedrot_schedule not in {"fixed", "fixed_b", "alternating"}:
+        raise ValueError(
+            "fedrot_align_schedule must be 'fixed', 'fixed_b', or 'alternating'"
+        )
+    if str(experiment.get("fedrot_align_matrix", "b")) not in {"a", "b"}:
+        raise ValueError("fedrot_align_matrix must be 'a' or 'b'")
+    fedrot_rotation_lambda = float(
+        experiment.get("fedrot_rotation_lambda", 1.0)
+    )
+    if not math.isfinite(fedrot_rotation_lambda) or not (
+        0.0 <= fedrot_rotation_lambda <= 1.0
+    ):
+        raise ValueError("fedrot_rotation_lambda must be finite and in [0, 1]")
     if int(experiment.get("calibration_gradient_batch_size", 1)) <= 0:
         raise ValueError("calibration_gradient_batch_size must be positive")
     if str(experiment.get("component_score_objective", "label_nll")) not in {

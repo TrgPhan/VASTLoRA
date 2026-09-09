@@ -25,13 +25,13 @@ class CompetitorSpec:
 COMPETITOR_SPECS: dict[str, CompetitorSpec] = {
     "fedex": CompetitorSpec(
         name="fedex",
-        fidelity="faithful exact intrinsic innovation in matched simulator",
-        description="Exact dense innovation baseline for asynchronous FedLoRA.",
+        fidelity="product-space async control; not full residual FedEx-LoRA",
+        description="Exact client innovation before server-rank recompression.",
     ),
     "fedrot": CompetitorSpec(
         name="fedrot",
-        fidelity="matched FedRot-LoRA Procrustes operator",
-        description="Factor alignment baseline with explicit async interpolation.",
+        fidelity="paper-faithful Procrustes operator adapted to immediate async",
+        description="Alternating A/B special-orthogonal alignment before async interpolation.",
     ),
     "glora_cache": CompetitorSpec(
         name="glora_cache",
@@ -47,6 +47,14 @@ COMPETITOR_SPECS: dict[str, CompetitorSpec] = {
         name="alignfed_calibration",
         fidelity="whole-update calibration control; not full AlignFed",
         description="Whole-update calibration gate control for async LoRA.",
+    ),
+    "spectral_surgery": CompetitorSpec(
+        name="spectral_surgery",
+        fidelity="paper-faithful spectral edit operator adapted per async return",
+        description=(
+            "Mean-absolute singular sensitivity and L1-preserving spectrum "
+            "reweighting with fixed paper hyperparameters."
+        ),
     ),
 }
 

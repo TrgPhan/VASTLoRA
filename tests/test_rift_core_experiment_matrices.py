@@ -46,13 +46,15 @@ def test_confirmation_covers_every_week8_task_and_primary_control() -> None:
         "raw",
         "freshness",
         "fedrot",
-        "spectral_filter",
+        "spectral_surgery",
         "alignfed_calibration",
         "rift",
         "rift_diag",
         "rift_core",
     }
     assert matrix["runner"] == {"script": "scripts/run_kaggle_3b.py", "buffer_size": 1, "schedule_mode": "async"}
+    assert matrix["experiment"]["fedrot_align_schedule"] == "alternating"
+    assert matrix["experiment"]["spectral_surgery"]["preserve_energy"] == "l1"
 
 
 def test_confirmation_windows_do_not_overlap_core_development() -> None:

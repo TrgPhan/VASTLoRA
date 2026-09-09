@@ -1,7 +1,7 @@
 {
-  "name": "rift-core-heldout-confirmation-v2",
+  "name": "rift-core-heldout-confirmation-v3",
   "required_schema_version": 5,
-  "description": "Held-out confirmation with expanded evaluation sets, corrected safety metrics and complete internal controls.",
+  "description": "Held-out confirmation with expanded evaluation sets, corrected safety metrics and paper-faithful competitor operators.",
   "runner": {
     "script": "scripts/run_kaggle_3b.py",
     "buffer_size": 1,
@@ -20,6 +20,21 @@
     "calibration_gate_objective": "class_nll",
     "monitor_objective": "class_nll",
     "harm_epsilon": 0.000001,
+    "fedrot_align_schedule": "alternating",
+    "fedrot_align_matrix": "a",
+    "fedrot_rotation_lambda": 1.0,
+    "spectral_surgery": {
+      "policy": "smooth_abs",
+      "core_frac": 0.2,
+      "noise_frac": 0.2,
+      "min_core_k": 1,
+      "amp_factor": 1.25,
+      "sup_factor": 0.8,
+      "mid_factor": 1.0,
+      "smooth_temperature": 0.35,
+      "smooth_center_q": 0.5,
+      "preserve_energy": "l1"
+    },
     "rift_component_gain_mass": 1,
     "rift_gate_min_staleness": 4,
     "rift_gate_selection": "largest_safe_scale",
@@ -125,7 +140,7 @@
     "raw",
     "freshness",
     "fedrot",
-    "spectral_filter",
+    "spectral_surgery",
     "alignfed_calibration",
     "rift",
     "rift_diag",
@@ -160,9 +175,11 @@
     }
   },
   "notes": [
-    "This v2 manifest must be committed before seeds 6101-6106 are run; every completed result must match that exact implementation commit.",
+    "This v3 manifest must be committed before seeds 6101-6106 are run; every completed result must match that exact implementation commit.",
     "SST-2 holds out 1024 fixed train examples and removes them before client/calibration sampling. QNLI and both MNLI splits use 1024 validation examples starting at offset2048.",
-    "FedRot is a geometry baseline, Spectral Filter is the nearest diagonal component baseline, AlignFed calibration is a whole-update safety control, and old RIFT is the internal gate-only ablation.",
+    "FedRot uses the paper's alternating A/B special-orthogonal operator, adapted to one async return at a time. Spectral Surgery uses mean-absolute sensitivity, smooth magnitude reweighting and L1 preservation, adapted per async return.",
+    "AlignFed calibration remains a whole-update safety proxy, not full AlignFed; full AlignFed requires buffered version groups, hidden-representation transforms, centering, participation weights and a different local objective.",
+    "FedEx is excluded because its exact residual update to the frozen backbone requires synchronous client cohorts and mutable unquantized base weights; the existing fedex name is only a product-space async control.",
     "RIFT-Diag is retained as the equal-budget diagonal repair control needed to test whether full-core mixing contributes.",
     "Every seed has equal weight and no seed may be removed after inspecting any method result.",
     "This confirms immediate asynchronous aggregation only; buffer_size remains 1."

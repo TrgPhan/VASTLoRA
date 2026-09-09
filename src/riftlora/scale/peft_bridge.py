@@ -154,6 +154,8 @@ def fedrot_aggregate_factor_state(
     active_rank: int,
     weight: float,
     max_rank: int,
+    align_matrix: str = "b",
+    rotation_lambda: float = 1.0,
     rank_rtol: float = 1e-5,
 ) -> dict[str, CompactSVD]:
     """Aggregate final client LoRA factors after orthogonal Procrustes alignment.
@@ -167,6 +169,10 @@ def fedrot_aggregate_factor_state(
         raise ValueError("FedRot factor averaging weight must be in [0, 1]")
     if max_rank <= 0:
         raise ValueError("max_rank must be positive")
+    if align_matrix not in {"a", "b"}:
+        raise ValueError("align_matrix must be 'a' or 'b'")
+    if not 0.0 <= rotation_lambda <= 1.0:
+        raise ValueError("rotation_lambda must be in [0, 1]")
     if set(server) != set(client_after):
         missing = sorted(set(server) - set(client_after))
         extra = sorted(set(client_after) - set(server))
@@ -192,7 +198,21 @@ def fedrot_aggregate_factor_state(
         client_a = _pad_rows(client.a[:active_rank, :], max_rank)
 
         if compact.rank:
-            rotation = _orthogonal_procrustes(client_b, server_b)
+            source = client_a if align_matrix == "a" else client_b
+            target = server_a if align_matrix == "a" else server_b
+            rotation = _orthogonal_procrustes(
+                source,
+                target,
+                align_matrix=align_matrix,
+            )
+            if rotation_lambda < 1.0:
+                identity = torch.eye(
+                    rotation.shape[0], dtype=rotation.dtype, device=rotation.device
+                )
+                rotation = _project_special_orthogonal(
+                    (1.0 - rotation_lambda) * identity
+                    + rotation_lambda * rotation
+                )
             client_b = client_b @ rotation
             client_a = rotation.T @ client_a
 
@@ -280,15 +300,36 @@ def _pad_rows(matrix: torch.Tensor, rows: int) -> torch.Tensor:
     return torch.cat([matrix.to(dtype=torch.float32, device="cpu"), padding], dim=0)
 
 
-def _orthogonal_procrustes(source: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+def _orthogonal_procrustes(
+    source: torch.Tensor,
+    target: torch.Tensor,
+    *,
+    align_matrix: str,
+) -> torch.Tensor:
     if source.shape != target.shape:
         raise ValueError("Procrustes source and target must have the same shape")
     if source.ndim != 2:
         raise ValueError("Procrustes inputs must be matrices")
+    rank = source.shape[0] if align_matrix == "a" else source.shape[1]
     if float(torch.linalg.matrix_norm(source).item()) == 0.0:
-        return torch.eye(source.shape[1], dtype=source.dtype, device=source.device)
+        return torch.eye(rank, dtype=source.dtype, device=source.device)
     if float(torch.linalg.matrix_norm(target).item()) == 0.0:
-        return torch.eye(source.shape[1], dtype=source.dtype, device=source.device)
-    u, _, vh = torch.linalg.svd(source.T @ target, full_matrices=False)
-    return u @ vh
+        return torch.eye(rank, dtype=source.dtype, device=source.device)
+    correlation = source @ target.T if align_matrix == "a" else source.T @ target
+    u, _, vh = torch.linalg.svd(correlation, full_matrices=False)
+    return _special_orthogonal_from_svd(u, vh)
+
+
+def _project_special_orthogonal(matrix: torch.Tensor) -> torch.Tensor:
+    u, _, vh = torch.linalg.svd(matrix, full_matrices=False)
+    return _special_orthogonal_from_svd(u, vh)
+
+
+def _special_orthogonal_from_svd(
+    u: torch.Tensor, vh: torch.Tensor
+) -> torch.Tensor:
+    signs = torch.ones(u.shape[1], dtype=u.dtype, device=u.device)
+    if float(torch.linalg.det(u @ vh).item()) < 0.0:
+        signs[-1] = -1.0
+    return (u * signs.unsqueeze(0)) @ vh
 

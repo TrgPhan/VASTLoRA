@@ -38,6 +38,18 @@ class ComponentScoreResult:
         )
 
 
+@dataclass(frozen=True)
+class ComponentSensitivityResult:
+    """Mean absolute gradient sensitivity for singular-value editing."""
+
+    sensitivities: dict[str, torch.Tensor]
+    calibration_loss: float
+
+    @property
+    def total_rank(self) -> int:
+        return sum(value.numel() for value in self.sensitivities.values())
+
+
 def score_compact_components_with_hooks(
     model: torch.nn.Module,
     innovations: Mapping[str, CompactSVD],
@@ -148,6 +160,59 @@ def score_compact_components_microbatched(
         raise ValueError("weighted_batches must contain at least one microbatch")
     return ComponentScoreResult(
         scores={name: values / total_weight for name, values in score_sums.items()},
+        calibration_loss=loss_sum / total_weight,
+    )
+
+
+def score_compact_component_sensitivities_microbatched(
+    model: torch.nn.Module,
+    innovations: Mapping[str, CompactSVD],
+    weighted_batches: Iterable[tuple[Mapping[str, torch.Tensor], float]],
+    *,
+    loss_fn: Callable[
+        [torch.nn.Module, Mapping[str, torch.Tensor]], torch.Tensor
+    ] | None = None,
+    epsilon: float = 1e-12,
+) -> ComponentSensitivityResult:
+    """Compute mean |u_k^T G v_k| for Spectral Surgery.
+
+    The hook score is ``-sigma_k * u_k^T G v_k``. Dividing by the singular
+    value recovers the paper's sensitivity to an additive singular-value
+    perturbation. Confirmation uses one example per microbatch so taking the
+    absolute value before reduction is a per-example mean-absolute reducer.
+    """
+
+    if not math.isfinite(epsilon) or epsilon <= 0.0:
+        raise ValueError("epsilon must be finite and positive")
+    sensitivity_sums = {
+        name: torch.zeros(compact.rank, dtype=torch.float32)
+        for name, compact in innovations.items()
+    }
+    loss_sum = 0.0
+    total_weight = 0.0
+    for batch, weight in weighted_batches:
+        weight = float(weight)
+        if not math.isfinite(weight) or weight <= 0.0:
+            raise ValueError("microbatch weights must be finite and positive")
+        result = score_compact_components_with_hooks(
+            model,
+            innovations,
+            batch,
+            loss_fn=loss_fn,
+        )
+        for name, scores in result.scores.items():
+            singular_values = innovations[name].s.detach().float().cpu()
+            denominator = singular_values.abs().clamp_min(epsilon)
+            sensitivity_sums[name] += (scores.abs() / denominator) * weight
+        loss_sum += result.calibration_loss * weight
+        total_weight += weight
+
+    if total_weight == 0.0:
+        raise ValueError("weighted_batches must contain at least one microbatch")
+    return ComponentSensitivityResult(
+        sensitivities={
+            name: values / total_weight for name, values in sensitivity_sums.items()
+        },
         calibration_loss=loss_sum / total_weight,
     )
 

@@ -26,6 +26,7 @@ FIDELITY = {
     "mtip": "projection-only transport baseline",
     "mtip_adaptive": "adaptive projection transport baseline",
     "spectral_filter": "Spectral-Surgery-style gradient component filter; not official paper implementation",
+    "spectral_surgery": competitor_fidelity("spectral_surgery"),
     "alignfed_calibration": competitor_fidelity("alignfed_calibration"),
     "rift": "proposed rank-wise objective filter plus paired gate",
     "rift_core": "experimental full-core calibration repair with delay trust region; not confirmed",
@@ -34,7 +35,7 @@ FIDELITY = {
 
 SKIPPED = {
     "AdaLoRA": "PEFT rank-allocation/training method, not an async server aggregation rule.",
-    "Spectral Surgery official": "No official public code found; paper is post-hoc adapter refinement, so the notebook uses a clearly labeled matched ablation only.",
+    "Spectral Surgery full protocol": "The runner ports the paper's spectral operator, but applies it per async return on q/v updates instead of once post-hoc on o/down projections.",
     "FLoRG": "Requires single-matrix/Gram LoRA reparameterization, incompatible with the current PEFT factor simulator without changing client training.",
     "GLoRA official": "No official public code found in the search; current runner lacks synchronous cohort consensus protocol.",
     "FedSteer official": "Official code exists, but its inactive-client replay protocol differs from delayed returned LoRA updates in this simulator.",

@@ -47,8 +47,8 @@ def test_fedex_exact_state_is_dense_difference() -> None:
 
 
 def test_competitor_registry_exposes_documented_labels() -> None:
-    assert COMPETITOR_SPECS["fedex"].fidelity.startswith("faithful exact")
-    assert COMPETITOR_SPECS["fedrot"].fidelity.startswith("matched FedRot")
+    assert COMPETITOR_SPECS["fedex"].fidelity.endswith("FedEx-LoRA")
+    assert COMPETITOR_SPECS["fedrot"].fidelity.startswith("paper-faithful")
     assert COMPETITOR_SPECS["alignfed_calibration"].fidelity.endswith("AlignFed")
 
 

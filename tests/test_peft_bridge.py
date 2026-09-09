@@ -1,6 +1,7 @@
 ﻿from types import SimpleNamespace
 
 import torch
+import pytest
 from torch import nn
 
 from riftlora.lowrank import CompactSVD, LowRankMatrix, compact_svd
@@ -86,16 +87,23 @@ def test_inactive_rank_gradients_are_masked() -> None:
     assert torch.all(module.lora_B["default"].weight.grad[:, 2:] == 0)
 
 
-def test_fedrot_factor_aggregation_aligns_rotated_client() -> None:
+@pytest.mark.parametrize("align_matrix", ["a", "b"])
+def test_fedrot_factor_aggregation_aligns_rotated_client(
+    align_matrix: str,
+) -> None:
     generator = torch.Generator().manual_seed(17)
     b = torch.randn(9, 4, generator=generator)
     a = torch.randn(4, 7, generator=generator)
     q, _ = torch.linalg.qr(torch.randn(4, 4, generator=generator))
+    if torch.linalg.det(q) < 0:
+        q[:, -1] *= -1
     compact = compact_svd(LowRankMatrix(2.0 * b, a), rtol=1e-7, max_rank=4)
+    canonical_b = compact.u * compact.s.unsqueeze(0)
+    canonical_a = compact.v.T / 2.0
     client = {
         "projection": FactorSnapshot(
-            a=q.T @ a,
-            b=b @ q,
+            a=q.T @ canonical_a,
+            b=canonical_b @ q,
             scaling=2.0,
         )
     }
@@ -104,8 +112,9 @@ def test_fedrot_factor_aggregation_aligns_rotated_client() -> None:
         {"projection": compact},
         client,
         active_rank=4,
-        weight=1.0,
+        weight=0.5,
         max_rank=4,
+        align_matrix=align_matrix,
         rank_rtol=1e-7,
     )
 

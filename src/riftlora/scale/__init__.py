@@ -8,11 +8,17 @@ from riftlora.scale.coordinator import (
     zero_compact,
 )
 from riftlora.scale.objective import (
+    ComponentSensitivityResult,
     ComponentScoreResult,
     filter_compact_by_scores,
     scale_compact_update,
     score_compact_components_microbatched,
+    score_compact_component_sensitivities_microbatched,
     score_compact_components_with_hooks,
+)
+from riftlora.scale.spectral_surgery import (
+    SpectralSurgeryConfig,
+    reweight_compact_spectra,
 )
 from riftlora.scale.peft_bridge import (
     FactorSnapshot,
@@ -29,6 +35,7 @@ __all__ = [
     "TransportConfig",
     "TransportResult",
     "ComponentScoreResult",
+    "ComponentSensitivityResult",
     "FactorSnapshot",
     "aggregate_compact_state",
     "capture_factor_snapshot",
@@ -41,8 +48,11 @@ __all__ = [
     "named_peft_lora_modules",
     "scale_compact_update",
     "score_compact_components_microbatched",
+    "score_compact_component_sensitivities_microbatched",
     "score_compact_components_with_hooks",
     "transport_compact_update",
     "zero_compact",
+    "SpectralSurgeryConfig",
+    "reweight_compact_spectra",
 ]
 

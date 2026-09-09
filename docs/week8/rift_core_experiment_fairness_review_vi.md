@@ -22,6 +22,11 @@ chay confirmation:
 - Development v2 dung 512 eval examples/task; confirmation v2 dung 1024.
   Raw/freshness/FedRot va RIFT-Diag da duoc them vao cohort chinh.
 - Runner fail neu eval bi truncate am tham hoac split co label ngoai range.
+- Confirmation v3 thay positive-only `spectral_filter` bang Spectral Surgery
+  operator port: per-example mean-absolute sensitivity, smooth spectral
+  reweight va L1 preservation. FedRot v3 luan phien A/B, ho tro soft rotation
+  va ep `det(R)>0`. Chi tiet fidelity va lenh confirmation nam tai
+  `docs/week8/competitor_fidelity_confirmation_runbook_vi.md`.
 
 Phan findings ben duoi la audit trail tai thoi diem phat hien. Muc P1/P2 da
 fix nhu tren khong con la known bug trong code hien tai; caveat ve fidelity

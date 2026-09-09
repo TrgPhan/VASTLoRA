@@ -7,6 +7,7 @@ import pytest
 from riftlora.lowrank import CompactSVD
 from riftlora.scale.objective import (
     filter_compact_by_scores,
+    score_compact_component_sensitivities_microbatched,
     score_compact_components_microbatched,
     score_compact_components_with_hooks,
 )
@@ -85,6 +86,35 @@ def test_microbatched_component_scores_match_full_batch() -> None:
 
     assert torch.allclose(actual.scores["layer"], expected.scores["layer"])
     assert actual.calibration_loss == pytest.approx(expected.calibration_loss)
+
+
+def test_mean_absolute_sensitivity_does_not_cancel_opposite_examples() -> None:
+    model = ToyModel()
+    innovation = CompactSVD(
+        torch.tensor([[1.0]]),
+        torch.tensor([2.0]),
+        torch.tensor([[1.0], [0.0]]),
+    )
+    batches = [
+        (
+            {"x": torch.tensor([[1.0, 0.0]]), "target": torch.tensor([[1.0]])},
+            1.0,
+        ),
+        (
+            {"x": torch.tensor([[1.0, 0.0]]), "target": torch.tensor([[-1.0]])},
+            1.0,
+        ),
+    ]
+
+    signed = score_compact_components_microbatched(
+        model, {"layer": innovation}, batches
+    )
+    magnitude = score_compact_component_sensitivities_microbatched(
+        model, {"layer": innovation}, batches
+    )
+
+    assert signed.scores["layer"].item() == pytest.approx(0.0)
+    assert magnitude.sensitivities["layer"].item() == pytest.approx(2.0)
 
 
 def test_filter_retains_global_component_gain_mass() -> None:

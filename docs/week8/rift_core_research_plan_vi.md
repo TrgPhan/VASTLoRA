@@ -157,3 +157,17 @@ core_candidate_rank, core_accepted_update_rank, core_server_state_rank. Day
 khong phai bandwidth saving: client da gui update truoc khi server repair.
 Doc core_* diagnostics va route de kiem tra repair. Diagonal/full dung extra
 gradient passes, Spectral khong co.
+
+## QNLI development 3 seeds da chay (2026-09-09)
+
+Cohort day du 5 methods tren non-IID + high staleness, 96 eval examples va
+seeds 5101-5103 da hoan tat. Mean accuracy: RIFT-Core 80.903%, RIFT-Diag
+79.861%, Spectral 74.653%, RIFT gate-only 74.653%, AlignFed calibration
+73.958%. Core va Diag deu hon Spectral tren 3/3 seeds. Core mean class NLL
+0.434355 la thap nhat; Diag harmful 0% la thap nhat. Day la development
+signal, chua phai held-out verdict. Xem chi tiet va provenance caveat tai
+`docs/week8/rift_core_qnli_development_results_vi.md`.
+
+MNLI-m max_length 192 OOM tai seed 5102 tren GPU 4 GiB. Local cohort dung
+matrix `configs/rift_core_mnli_local_4gb_matrix.json` voi max_length 128 cho
+tat ca methods. Khong tron artifact max_length 192 da chay voi cohort nay.

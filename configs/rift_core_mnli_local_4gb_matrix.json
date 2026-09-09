@@ -1,0 +1,81 @@
+{
+  "name": "rift-core-mnli-local-4gb-development-v1",
+  "required_schema_version": 4,
+  "description": "MNLI-m development cohort constrained to max_length 128 for a 4 GiB GPU.",
+  "runner": {
+    "script": "scripts/run_kaggle_3b.py",
+    "buffer_size": 1,
+    "schedule_mode": "async"
+  },
+  "experiment": {
+    "warmup_returns": 4,
+    "collected_returns": 16,
+    "calibration_sampling": "stratified",
+    "calibration_gradient_examples": 24,
+    "calibration_gate_examples": 48,
+    "monitor_examples": 48,
+    "calibration_gradient_batch_size": 1,
+    "eval_batch_size": 1,
+    "component_score_objective": "class_nll",
+    "calibration_gate_objective": "class_nll",
+    "monitor_objective": "class_nll",
+    "rift_component_gain_mass": 1,
+    "rift_gate_min_staleness": 4,
+    "rift_gate_selection": "largest_safe_scale",
+    "rift_gate_confidence_z": 0.25,
+    "rift_max_mean_increase": 0,
+    "rift_step_scales": [1, 0.5, 0.25],
+    "rift_include_freshness_fallback": true,
+    "late_tau": 4,
+    "extreme_tau": 8,
+    "rift_core": {
+      "steps": 3,
+      "learning_rate": 0.03,
+      "radius": 0.5,
+      "proximal_weight": 0.01,
+      "delay_scale": 8
+    }
+  },
+  "tasks": [
+    {
+      "name": "mnli_m",
+      "run_name": "mnli_m",
+      "subset": "mnli",
+      "task": "mnli",
+      "validation_split": "validation_matched",
+      "premise_column": "premise",
+      "hypothesis_column": "hypothesis",
+      "label_texts": [" true", " unknown", " false"],
+      "prompt_style": "truth_value",
+      "eval_offset": 1024,
+      "base_config": "configs/local_1_5b_rift_development.json",
+      "label_column": "label",
+      "max_train_examples": 512,
+      "eval_examples": 96,
+      "model_overrides": {
+        "max_length": 128
+      }
+    }
+  ],
+  "regimes": [
+    {
+      "name": "noniid_high_staleness",
+      "partition_mode": "label_shard",
+      "client_ranks": [2, 4, 8, 4],
+      "compute_times": [1, 2, 5, 10]
+    }
+  ],
+  "methods": [
+    "spectral_filter",
+    "alignfed_calibration",
+    "rift",
+    "rift_diag",
+    "rift_core"
+  ],
+  "seeds": [5101, 5102, 5103],
+  "notes": [
+    "Development only; max_length 128 is fixed for every method because max_length 192 OOMed on the local 4 GiB GPU.",
+    "Do not combine the abandoned max_length 192 seed5101 result with this cohort.",
+    "All methods share train, calibration, eval examples, schedules and local compute; core methods use extra server gradients."
+  ]
+}

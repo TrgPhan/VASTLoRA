@@ -451,6 +451,13 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                         experiment=repair_gate, freshness=freshness,
                         comparator_updates=filtered,
                     )
+                    core_diagnostics.update({
+                        "core_positive_filter_rank": float(selected_rank),
+                        "core_candidate_rank": float(sum(u.rank for u in repair.updates.values())),
+                        "core_accepted_update_rank": float(sum(u.rank for u in accepted_updates.values())),
+                        "core_server_state_rank": float(sum(u.rank for u in next_state.values())),
+                    })
+                    retained_ranks[-1] = int(core_diagnostics["core_accepted_update_rank"])
                     accepted_scales.append(scale)
                     gate_mean_deltas.append(mean_delta)
                     accepted_routes.append(route)
@@ -2463,6 +2470,8 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
             raise ValueError("core repair requires component_score_objective=class_nll")
         if float(experiment.get("rift_component_gain_mass", 1.0)) != 1.0:
             raise ValueError("core repair comparator requires rift_component_gain_mass=1")
+        if float(experiment.get("rift_minimum_predicted_gain", 0.0)) != 0.0:
+            raise ValueError("core repair anchor requires rift_minimum_predicted_gain=0")
     if not 0.0 <= experiment.get("residual_beta", 0.5) <= 1.0:
         raise ValueError("residual_beta must be between zero and one")
     if experiment.get("residual_staleness_temperature", 1.0) <= 0.0:

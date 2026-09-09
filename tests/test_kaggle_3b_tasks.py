@@ -16,6 +16,34 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(MODULE)
 
 
+@pytest.mark.parametrize("repair_loss,expected_route", [(0.3, "rank_filtered"), (0.4, "spectral_comparator"), (0.5, "spectral_comparator")])
+def test_core_gate_compares_projected_repair_with_filter(monkeypatch, repair_loss, expected_route):
+    from riftlora.lowrank import CompactSVD
+
+    compact = CompactSVD(torch.eye(1), torch.ones(1), torch.eye(1))
+    repair, comparator = {"layer": compact}, {"layer": compact}
+    model = SimpleNamespace(loss=0.6)
+    monkeypatch.setattr(MODULE, "_per_example_classification_losses", lambda model, *a, **k: torch.full((4,), model.loss))
+    monkeypatch.setattr(MODULE, "load_compact_adapter_state", lambda model, state, **k: setattr(model, "loss", state["loss"]))
+    monkeypatch.setattr(MODULE, "_aggregate_scaled_updates", lambda state, updates, **k: {"loss": repair_loss if updates is repair else 0.4})
+    state, _, scale, _, route = MODULE._rift_gate_state(
+        model, None, {"loss": 0.6}, repair, comparator, [],
+        dataset_config={}, max_length=16, batch_size=1, freshness=1.,
+        experiment={"server_max_rank": 1, "rift_step_scales": [1.], "rift_include_freshness_fallback": False},
+        comparator_updates=comparator,
+    )
+    assert route == expected_route
+    assert state["loss"] == min(repair_loss, 0.4)
+    assert scale == 1.
+
+
+def test_core_validation_rejects_mismatched_anchor_threshold():
+    config = json.loads((SCRIPT.parents[1] / "configs/local_1_5b_rift_development.json").read_text())
+    config["experiment"]["rift_minimum_predicted_gain"] = 0.01
+    with pytest.raises(ValueError, match="anchor"):
+        MODULE._validate_config(config, "rift_core")
+
+
 def test_qnli_prompt_and_label_texts() -> None:
     config = {
         "hub_path": "nyu-mll/glue",

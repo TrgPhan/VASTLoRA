@@ -53,6 +53,11 @@ hypothesis, khong la exhaustive novelty clearance.
 - Spectral Surgery: https://arxiv.org/abs/2603.03995
   Gradient-guided singular-value reweighting da co. Full core thay doi ca
   directions trong fixed left/right spans, khong chi singular values.
+- LoRA-XS: https://arxiv.org/abs/2405.17604
+  Hoc mot r*r core giua hai factors frozen da co. Khong claim full-core
+  parameterization la moi. Prototype muon y tuong nay cho incoming stale
+  innovation thay vi SVD cua pretrained weight, voi delay trust region va
+  selection sau server-rank projection. Gia tri ket hop nay con phai chung minh.
 - FedLAW: https://proceedings.mlr.press/v202/li23s.html
   Server proxy-data optimization cua aggregation weights da co.
 - LoRA-FAIR: https://arxiv.org/abs/2411.14961
@@ -102,6 +107,10 @@ hai safety trajectories nay nhu hai thu nghiem doc lap.
 4. Neu co tin hieu, tang local_steps 1 -> 4, measured returns 16 -> 64 cho
    MOI method, eval 96 -> 512 cho QNLI/MNLI. SST-2 can offset/range rieng de
    khong vuot validation size. Bao cao equal-returns va server wall-clock.
+   Local training hien toi uu absolute label-token NLL (da loai EOS), trong
+   khi server core toi uu class-normalized NLL. Day la hai objective khac
+   nhau; them ablation local class-NLL cho tat ca methods de kiem tra lieu
+   loi ich chi den tu server bu dap objective mismatch.
 5. Freeze winner tren development theo mean accuracy tren tat ca seeds,
    class NLL noninferiority margin 0.005. Neu full khong hon diag/spectral
    thi dung claim "cross-component interaction improves accuracy".
@@ -121,3 +130,30 @@ Unit tests kiem tra full-core rotation vs diagonal, weighted microbatch
 equivalence, trust radius, zero-radius baseline va cleanup khi loss NaN.
 Full repository regression tests pass truoc GPU smoke. Ket qua GPU smoke se
 duoc ghi rieng; prototype chua co accuracy confirmation.
+
+## GPU smoke da chay (2026-09-09)
+
+Nguon: outputs/rift_core_smoke, clean commit
+70c1985bbcbad9190bab69fe01c00e2058d4778c. Qwen 1.5B 4-bit, QNLI development
+offset1024, seed5101, 4 warmup + 2 measured returns, 24 eval examples.
+
+| Method | Accuracy % | Class NLL | Harmful % | Runtime s | Peak torch allocated GiB |
+|---|---:|---:|---:|---:|---:|
+| Spectral Filter | 66.667 | 0.491231 | 50.0 | 20.45 | 2.1895 |
+| RIFT-Diag | 66.667 | 0.487835 | 50.0 | 57.26 | 2.1895 |
+| RIFT-Core | 66.667 | 0.472861 | 0.0 | 34.42 | 2.1895 |
+
+Ca ba cung baseline accuracy 66.667%, class NLL 0.494557. Khong co late event,
+client-return coverage chi 50%; harm 50% chi la 1/2 updates. Runtime la so do
+mot lan (khong gom toan bo startup), khong du de ket luan core nhanh hon diag.
+Ca hai repaired candidates duoc gate chon scale1. Full core off-diagonal norm
+trung binh ~0.400 va ~0.187 tren hai events, nen co che cross-component da
+thuc su hoat dong. Day chi la integration pass va tin hieu NLL; accuracy hoa.
+
+Trong artifact smoke commit 70c1985, retained_fraction mo ta positive mask
+truoc repair. Ban code sau smoke da sua metric nay thanh so compact columns
+cua accepted update / raw innovation, va them core_positive_filter_rank,
+core_candidate_rank, core_accepted_update_rank, core_server_state_rank. Day
+khong phai bandwidth saving: client da gui update truoc khi server repair.
+Doc core_* diagnostics va route de kiem tra repair. Diagonal/full dung extra
+gradient passes, Spectral khong co.

@@ -88,6 +88,19 @@ def test_zero_radius_recovers_filter_and_delay_contracts_trust_region():
     assert stale.diagnostics["core_max_distance"] <= .050001
 
 
+def test_hook_uses_server_weight_and_handles_empty_innovation():
+    batch = {"x": torch.eye(2), "target": torch.zeros(2, 2)}
+    result = run(Model(), [(batch, 2.)], server_weight=.3, config=CoreRepairConfig(radius=0.))
+    assert result.diagnostics["core_fit_loss_initial"] == pytest.approx(.045)
+    empty = CompactSVD(torch.empty(2, 0), torch.empty(0), torch.empty(2, 0))
+    result = repair_compact_core(
+        Model(), {"layer": empty}, {"layer": torch.empty(0)}, [(batch, 2.)],
+        loss_fn=mse, server_weight=.3, staleness=0,
+    )
+    assert result.updates["layer"].rank == 0
+    assert result.diagnostics["core_fit_steps"] == 0
+
+
 def test_failure_cleans_hooks_and_flags():
     model = Model()
     flags = [p.requires_grad for p in model.parameters()]

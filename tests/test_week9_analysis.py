@@ -25,14 +25,16 @@ def test_incomplete_confirmation_cannot_pass(tmp_path):
     (tmp_path / "matrix.json").write_text(json.dumps(load_matrix("confirmation")))
     report = analyze(tmp_path)
     assert report["status"] == "INCOMPLETE_OR_UNVERIFIED"
-    assert len(report["missing"]) == 72
+    assert len(report["missing"]) == 84
 
 
-def _write_cohort(tmp_path, first_only=False):
+def _write_cohort(tmp_path, first_only=False, spectral_nll=1.0):
     matrix = load_matrix("confirmation")
     (tmp_path / "matrix.json").write_text(json.dumps(matrix))
     for method, seed, config, path in specs(matrix, tmp_path):
         nll = 0.8 if method == "rift_core" else 1.0
+        if method == "spectral_surgery":
+            nll = spectral_nll
         payload = {
             "schema_version": 5, "method": method, "seed": seed, "config": config,
             "config_fingerprint": runner._runner_config_fingerprint(config),
@@ -69,6 +71,17 @@ def _write_cohort(tmp_path, first_only=False):
         if first_only:
             break
     return matrix, path
+
+
+def test_spectral_control_participates_in_confirmation_verdict(tmp_path):
+    _write_cohort(tmp_path, spectral_nll=0.6)
+    report = analyze(tmp_path)
+    assert not report["issues"] and not report["missing"]
+    assert report["status"] == "NO_GO_NLL"
+    spectral_pairs = [p for p in report["pairs"] if p["baseline"] == "spectral_surgery"]
+    assert len(spectral_pairs) == 2
+    assert all(p["paired_seeds"] == 6 and not p["nll_noninferior"] for p in spectral_pairs)
+    assert all(p["nll_noninferior"] for p in report["pairs"] if p not in spectral_pairs)
 
 
 def test_complete_paired_cohort_then_corrupted_details(tmp_path):

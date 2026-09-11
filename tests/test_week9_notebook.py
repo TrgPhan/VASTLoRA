@@ -43,7 +43,7 @@ def test_week9_notebook_defaults_to_no_training_with_frozen_checkout():
     source = "\n".join("".join(cell["source"]) for cell in code_cells())
     assert 'REQUIRE_WEEK9_TOKENIZER="1"' in source
     assert "tests/test_week9_real_tokenizer.py" in source
-    assert '"week9_v3_"' in source
+    assert '"week9_v4_"' in source
 
 
 def test_week9_training_and_weight_download_are_guarded():
@@ -77,8 +77,8 @@ def notebook_command(profile, output):
 
 
 @pytest.mark.parametrize("mode,count", [
-    ("preflight", 36), ("smoke", 6), ("pilot", 6),
-    ("development", 36), ("confirmation", 72),
+    ("preflight", 42), ("smoke", 7), ("pilot", 7),
+    ("development", 42), ("confirmation", 84),
 ])
 def test_notebook_mode_commands_plan_real_jobs_without_training(mode, count, monkeypatch, tmp_path):
     monkeypatch.syspath_prepend(str(ROOT / "scripts"))

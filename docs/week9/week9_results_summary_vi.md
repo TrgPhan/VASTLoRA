@@ -1,6 +1,29 @@
 # Week 9: tong hop tien do va ket qua
 
-Cap nhat 2026-09-12. Protocol v3; trang thai: FIXED_AND_PREFLIGHT_TESTED / EMPIRICAL_PENDING.
+Cap nhat 2026-09-12. Protocol hien tai v4; empirical Qwen1.5B van pending.
+
+## Cap nhat v4: control tu Week 8 final board
+
+- Them `spectral_surgery` per-return smooth_abs/L1, giu `alignfed_calibration`
+  whole-update gate voi scales [1, 0.5, 0.25, 0.125]. Doi chieu result MNLI-m
+  seed6101 va config confirmation v3 cua Week 8, khong dung posthoc/reference.
+- Spectral giu numerical fix additive sensitivity cho sigma nho; khong phai
+  bitwise replay old commit. Objective la response NLL, khong phai class NLL.
+- 7 methods: smoke/pilot7, dev42, confirmation84. Spectral nam trong paired NLL gate.
+- Dung output week9_v4_*, khong import/tron v3; notebook se pin clean runtime moi.
+- Tiny PEFT generation test da exercise ca spectral reweight va whole-update gate;
+  chua co ket qua full Qwen1.5B v4 de xep hang hai control hay RIFT.
+- Kiem tra v4: 113 tests Week9/objective/core/spectral va 53 regression tests
+  classification/matrix/paper baseline pass (tong166). Dry-run42 dev +84
+  confirmation hop le, moi full-budget trace co15 measured late returns.
+- Doi chieu AST: `_whole_update_gate_state` khong doi so voi source commit cua
+  board. Test sensitivity so sanh cong thuc chia-sigma cu voi unit-spectrum
+  hien tai khi sigma du lon; test rieng sigma0/rat nho giu numerical fix.
+- Xem `week9_generation_protocol_vi.md` cho mode/lenh chay va gioi han claim.
+
+## Lich su v1-v3
+
+Cac so job/ket qua/audit ben duoi la ghi nhan lich su, KHONG phai ket qua v4.
 Theo yeu cau, dot hoan thien nay KHONG chay them job train Qwen1.5B dai.
 Chi chay unit/integration tests bang tiny random Qwen+PEFT, dry-run va data preflight.
 

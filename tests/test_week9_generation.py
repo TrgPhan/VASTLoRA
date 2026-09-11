@@ -89,7 +89,7 @@ def test_group_split_dedup_and_length_filter_are_seed_independent():
     assert audit == generation.prepare_records(rows, Tokenizer(), ds, 16)[1]
 
 
-@pytest.mark.parametrize("method", ["raw", "freshness", "alignfed_calibration", "rift", "rift_diag", "rift_core"])
+@pytest.mark.parametrize("method", ["raw", "freshness", "alignfed_calibration", "spectral_surgery", "rift", "rift_diag", "rift_core"])
 def test_generation_runs_shared_methods_with_real_peft(monkeypatch, tiny_model, method, tmp_path):
     from datasets import Dataset, DatasetDict
     data = DatasetDict(train=Dataset.from_list([row(i) for i in range(40)]),
@@ -97,6 +97,26 @@ def test_generation_runs_shared_methods_with_real_peft(monkeypatch, tiny_model, 
     monkeypatch.setattr(generation, "load_instruction_data", lambda _: (data, {}))
     monkeypatch.setattr(shared, "_load_model", lambda _: (Tokenizer(), tiny_model))
     c = config()
+    calls = []
+    if method == "spectral_surgery":
+        original = shared.reweight_compact_spectra
+        def record_edit(updates, sensitivities, **kwargs):
+            assert kwargs["config"].policy == "smooth_abs"
+            assert kwargs["config"].preserve_energy == "l1"
+            edited = original(updates, sensitivities, **kwargs)
+            for name in updates:
+                torch.testing.assert_close(edited[name].s.sum(), updates[name].s.sum())
+            calls.append("spectral")
+            return edited
+        monkeypatch.setattr(shared, "reweight_compact_spectra", record_edit)
+    elif method == "alignfed_calibration":
+        original_gate = shared._whole_update_gate_state
+        def record_gate(*args, **kwargs):
+            assert kwargs["experiment"]["alignfed_calibration_scales"] == [1., .5, .25, .125]
+            assert kwargs["experiment"]["calibration_gate_objective"] == "label_nll"
+            calls.append("alignfed")
+            return original_gate(*args, **kwargs)
+        monkeypatch.setattr(shared, "_whole_update_gate_state", record_gate)
     shared._validate_config(c, method)
     result = shared.run_experiment(c, method=method, seed=9001)
     m = result["metrics"]
@@ -105,6 +125,8 @@ def test_generation_runs_shared_methods_with_real_peft(monkeypatch, tiny_model, 
     details = result["final_eval_details"]
     assert m["final_token_nll"] == pytest.approx(sum(r["nll_sum"] for r in details) / sum(r["response_tokens"] for r in details))
     assert len(result["events"]) == 6
+    if method in {"spectral_surgery", "alignfed_calibration"}:
+        assert len(calls) == c["experiment"]["collected_returns"]
     selected = result["data_diagnostics"]["generation"]["selected_source_ids"]
     assert len(set().union(*map(set, selected.values()))) == sum(map(len, selected.values()))
     # Exercise the artifact checker against the actual runner, not just fabricated rows.
@@ -116,6 +138,29 @@ def test_generation_runs_shared_methods_with_real_peft(monkeypatch, tiny_model, 
     path.write_text(json.dumps(result, allow_nan=False), encoding="utf-8")
     validate_run(path, config=c, method=method, seed=9001, matrix=load_matrix(smoke=True))
     json.dumps(result, allow_nan=False)
+
+
+@pytest.mark.parametrize("phase", ["development", "confirmation"])
+def test_week9_uses_final_board_controls_and_parameters(phase):
+    week8 = json.loads((ROOT / "configs/rift_core_heldout_confirmation_matrix.json").read_text())
+    base = json.loads((ROOT / "configs/local_1_5b_rift_development.json").read_text())
+    matrix = load_matrix(phase)
+    assert "spectral_surgery" in matrix["methods"]
+    assert "alignfed_calibration" in matrix["methods"]
+    assert not {"spectral_surgery_posthoc", "alignfed_reference", "spectral_filter"} & set(matrix["methods"])
+    for baseline in ("spectral_surgery", "alignfed_calibration"):
+        assert baseline in matrix["gates"]["baselines"]
+    for method, _, c, _ in specs(matrix, ROOT / "outputs/test_week9"):
+        assert c["experiment"]["spectral_surgery"] == week8["experiment"]["spectral_surgery"]
+        assert c["experiment"]["alignfed_calibration_scales"] == base["experiment"]["alignfed_calibration_scales"]
+        shared._validate_config(c, method)
+
+
+def test_generation_spectral_requires_per_example_sensitivity():
+    c = config()
+    c["experiment"]["calibration_gradient_batch_size"] = 2
+    with pytest.raises(ValueError, match="per-example"):
+        shared._validate_config(c, "spectral_surgery")
 
 
 def test_generation_refuses_classification_objective():

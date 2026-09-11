@@ -1,6 +1,6 @@
 # Week 9: generative/NLL matrix
 
-Ngay: 2026-09-12. Protocol v3. Pham vi: buoc tiep theo cua guide RIFT, sau classification Week 8.
+Ngay: 2026-09-12. Protocol v4. Pham vi: buoc tiep theo cua guide RIFT, sau classification Week 8.
 
 Trang thai: CODE_READY, full development/confirmation CHUA CHAY theo yeu cau.
 Xem [tong hop Week 9](week9_results_summary_vi.md) de phan biet smoke cu va protocol hien tai.
@@ -31,7 +31,7 @@ vao user turn, mo assistant turn bang add_generation_prompt. Teacher forcing va
 greedy generation dung cung prompt token IDs. Reference ket thuc bang im_end/EOS;
 generation dung hop cua EOS tokenizer va danh sach stop tokens trong generation config.
 max_new_tokens=128 tach rieng khoi reference cap64; khong ep model viet dung reference.
-Day la sua protocol chung cho ca 6 method, khong phai tune rieng de RIFT thang.
+Day la sua protocol chung cho ca 7 method, khong phai tune rieng de RIFT thang.
 Vuot ngan sach thi loai mau truoc chia/sampling; khong cat cau tra loi roi
 gia vo dang do NLL toan cau. Ket luan chi ap dung short QA, chua bao phu
 instruction dai, reasoning dai hay summarization.
@@ -81,7 +81,7 @@ semantic overlap hay contamination tu pretraining.
 | Eval examples | 128 validation | 256 test |
 | Seeds | 9101-9103 | 9201-9206 |
 | Regimes | category-shard non-IID va IID; ca hai high staleness | Giong dev |
-| So jobs | 36 | 72 |
+| So jobs | 42 | 84 |
 
 Partition category-shard la non-IID theo loai instruction, khong phai chia
 nhan dap an dung/sai. Scheduler immediate async, compute times [1,2,5,10].
@@ -92,6 +92,32 @@ client examples, calibration allocation va eval; chi thay phep xu ly update.
 FedEx-LoRA residual aggregation. `alignfed_calibration` la whole-update gate,
 khong phai full AlignFed. Raw/freshness khong su dung calibration gradient,
 nhung van reserve cung nhom de client pool khop giua methods.
+
+## Control tu final board Week 8
+
+Protocol v4 them dung `spectral_surgery` vao 7 methods va 4 baselines trong NLL gate.
+`alignfed_calibration` da co; scales duoc ghi ro [1, 0.5, 0.25, 0.125].
+Doi chieu config va result MNLI-m seed6101 trong cohort
+`outputs/rift_core_confirmation_v3_1_5b`, source commit
+`5d34c8414b295d8a013658d8fd94355063033db9`:
+
+- AlignFed: whole-update gate tren mean per-example calibration loss; khong phai
+  `alignfed_reference` co buffered semantic transform.
+- Spectral: `spectral_surgery`, edit tung returned innovation, `smooth_abs`,
+  amp1.25/sup0.8, temperature0.35, center quantile0.5, preserve L1.
+  Khong phai `spectral_filter` va khong phai `spectral_surgery_posthoc`.
+- Khong doi phep gate/reweight hay RIFT math. Objective chung doi tu class NLL
+  cua Week 8 sang response NLL gom EOS cua Week 9. Dataset, eval va returns
+  van theo Week 9, khong phai tai lap so Acc cua Week 8.
+- Giu numerical fix da co: tinh additive sensitivity bang unit-spectrum hooks,
+  thay vi chia gradient cho sigma rat nho. Tuong duong cong thuc cu khi sigma
+  du lon; KHONG cam ket bitwise identical voi old commit, khong khoi phuc loi so.
+- Khong tu ket luan full/reference yeu hon noi chung: cac audit khac protocol
+  khong du de xep hang truc tiep. Claim o day chi la so voi matched controls.
+
+Doi cohort name/output sang v4 vi danh sach doi thu va gate thay doi. Khong
+ghi de hay import completed runs v3 vao v4. Pilot v4 van tai su dung trong
+development v4; khong can doi seed/data budget de them Spectral.
 
 ## Loss va metrics
 
@@ -114,14 +140,14 @@ Khong chon checkpoint theo held-out; baseline/final deu evaluate theo lich co di
 
 ## Gate va muc claim
 
-Gate Week 9: voi moi control raw/freshness/whole-gate va moi regime, tinh
+Gate Week 9: voi moi control raw/freshness/whole-gate/spectral_surgery va moi regime, tinh
 paired difference `NLL(target) - NLL(control)` tren tat ca 6 seed.
 Can tren CI95 hai phia (Student t) <= 0.05 nats/token de pass non-inferiority.
 Margin 0.05 tuong ung khoang 5.13% ty le PPL, la nguong thiet ke truoc matrix,
 khong phai gia tri suy ra tu cac ket qua thang. Bao cao ca interval va tung seed.
 Voi 6 seed, CI van phu thuoc gia dinh paired differences va co the rong.
 
-Can them du 72 runs, data/config khop, mot clean implementation commit,
+Can them du 84 runs, data/config khop, mot clean implementation commit,
 it nhat 8 late events/run va acceptance cua target >= 0.5 moi run.
 Thieu data/provenance: INCOMPLETE_OR_UNVERIFIED; chua du CI: INCONCLUSIVE_NLL;
 CI95 lower > margin: NO_GO_NLL. PASS_WEEK9_NLL_GATE_ONLY khong thay the
@@ -140,33 +166,33 @@ evaluate cac classification checkpoints da freeze tren mot generative probe chun
 
 ```powershell
 python -m pip install -e ".[scale,dev,generation]"
-python scripts/run_week9_generation.py --output-root outputs/week9_v3_dev --prepare-only
+python scripts/run_week9_generation.py --output-root outputs/week9_v4_dev --prepare-only
 python -m pytest tests/test_week9_real_tokenizer.py tests/test_week9_generation.py tests/test_week9_analysis.py tests/test_week9_launcher.py -q
-python scripts/run_week9_generation.py --output-root outputs/week9_v3_dev --dry-run
-python scripts/run_week9_generation.py --output-root outputs/week9_v3_dev --plan-only
+python scripts/run_week9_generation.py --output-root outputs/week9_v4_dev --dry-run
+python scripts/run_week9_generation.py --output-root outputs/week9_v4_dev --plan-only
 ```
 
 Smoke local (6 jobs, seed9001, 1 warmup + 5 measured returns, eval4):
 
 ```powershell
-python scripts/run_week9_generation.py --smoke --output-root outputs/week9_v3_smoke --gpu 0
-python scripts/analyze_week9_generation.py --input-dir outputs/week9_v3_smoke
+python scripts/run_week9_generation.py --smoke --output-root outputs/week9_v4_smoke --gpu 0
+python scripts/analyze_week9_generation.py --input-dir outputs/week9_v4_smoke
 ```
 
 Development du ma tran:
 
 ```powershell
-python scripts/run_week9_generation.py --output-root outputs/week9_v3_dev --gpu 0 --gpu 1
-python scripts/analyze_week9_generation.py --input-dir outputs/week9_v3_dev
+python scripts/run_week9_generation.py --output-root outputs/week9_v4_dev --gpu 0 --gpu 1
+python scripts/analyze_week9_generation.py --input-dir outputs/week9_v4_dev
 ```
 
 Sau khi review dev va freeze code/config, chay confirmation tren clean checkout:
 
 ```powershell
-python scripts/run_week9_generation.py --phase confirmation --output-root outputs/week9_v3_confirmation --prepare-only
-python scripts/run_week9_generation.py --phase confirmation --output-root outputs/week9_v3_confirmation --dry-run
-python scripts/run_week9_generation.py --phase confirmation --output-root outputs/week9_v3_confirmation --gpu 0 --gpu 1
-python scripts/analyze_week9_generation.py --input-dir outputs/week9_v3_confirmation --target rift_core
+python scripts/run_week9_generation.py --phase confirmation --output-root outputs/week9_v4_confirmation --prepare-only
+python scripts/run_week9_generation.py --phase confirmation --output-root outputs/week9_v4_confirmation --dry-run
+python scripts/run_week9_generation.py --phase confirmation --output-root outputs/week9_v4_confirmation --gpu 0 --gpu 1
+python scripts/analyze_week9_generation.py --input-dir outputs/week9_v4_confirmation --target rift_core
 ```
 
 Mot GPU thi chi dung --gpu 0. --gpu 0 --gpu 1 la hai job doc lap, KHONG ghep
@@ -177,7 +203,7 @@ selection deu phai nam trong manifest. Output cu chi skip neu config/matrix/
 seed/commit va clean provenance khop. Dirty smoke da co result thi dung output
 root moi khi chay lai; khong force ghi de ket qua cu. Script dung khi worker
 loi/OOM, khong tu doi budget. Tren GPU 4GB chi bat dau bang smoke; chua xac
-nhan full development 36 jobs tren GPU nay.
+nhan full development 42 jobs tren GPU nay.
 
 ### Resume va xu ly loi
 
@@ -186,9 +212,9 @@ nhan full development 36 jobs tren GPU nay.
    boundary, harmful/late harmful tu monitor va provenance. Chi co result.json la chua du.
    CSV thieu cot/khong parse duoc se duoc ghi thanh issue, khong crash ca analyzer.
    runs.csv luon duoc ghi lai, ke ca bang rong co header khi0 run hop le.
-2. --resume-root /kaggle/input/.../week9_v3_confirmation: import completed runs dung
+2. --resume-root /kaggle/input/.../week9_v4_confirmation: import completed runs dung
    config/seed/implementation tu input dataset. Khong import dirty/v1/mixed commit.
-3. --max-jobs 2 chi gioi han 2 job MOI trong phien; manifest van giu du 36/72.
+3. --max-jobs 2 chi gioi han 2 job MOI trong phien; manifest van giu du 42/84.
 4. Neu bi ngat giua job: mac dinh dung va chi ro thu muc partial. Them
    --retry-incomplete de archive vao incomplete/ roi train lai seed do tu dau.
    Chua co mid-job optimizer/client/server checkpoint resume. Khong goi day la
@@ -220,15 +246,15 @@ Notebook khoa Qwen2.5-1.5B-Instruct NF4; doi model can cohort/config version moi
 
 | MODE | So job duoc chon | Muc dich |
 |---|---:|---|
-| preflight | 36 plans, khong train | Audit du lieu/config full dev; RUN_TRAINING phai False |
-| smoke | 6 | Seed9001, 1+5 returns, eval4; chi test pipeline/GPU |
-| pilot | 6 | Seed9101, non-IID, full dev budget 8+64 returns, eval128 |
-| development | 36 | 3 seeds x 2 regimes x 6 methods, eval128 |
-| confirmation | 72 | 6 seeds x 2 regimes x 6 methods, eval256 held-out |
+| preflight | 42 plans, khong train | Audit du lieu/config full dev; RUN_TRAINING phai False |
+| smoke | 7 | Seed9001, 1+5 returns, eval4; chi test pipeline/GPU |
+| pilot | 7 | Seed9101, non-IID, full dev budget 8+64 returns, eval128 |
+| development | 42 | 3 seeds x 2 regimes x 7 methods, eval128 |
+| confirmation | 84 | 6 seeds x 2 regimes x 7 methods, eval256 held-out |
 
 Sau smoke, dung MODE='pilot' de thu mot seed voi budget that. Pilot va development
-cung root week9_v3_development va manifest 36 jobs: job pilot hoan tat hop le se
-duoc skip khi chay development. Report pilot van thieu30 jobs la dung, khong phai
+cung root week9_v4_development va manifest 42 jobs: job pilot hoan tat hop le se
+duoc skip khi chay development. Report pilot van thieu35 jobs la dung, khong phai
 loi va khong duoc xem la confirmation. Smoke co root rieng, khong tron vao dev.
 MAX_JOBS chi gioi han so job moi trong phien, khong loai seed khoi analysis.
 Moi lan doi MODE, chay lai settings va cac cell phia sau. Muon tiep tuc o phien
@@ -243,13 +269,13 @@ Model weights chi precache khi RUN_TRAINING=True. Notebook zip artifacts cuoi cu
 - [x] Doc Week 9 va doi chieu limitations Week 8.
 - [x] Dataset pin, group split, dedup, length filter va audit du lieu that.
 - [x] Collator response-only, gradient/NLL/perplexity va greedy sequence metrics.
-- [x] Tai su dung 6 method trong shared async runner.
+- [x] Tai su dung 7 method trong shared async runner.
 - [x] Matrix development/confirmation va analyzer co completeness/provenance gates.
-- [x] Tiny-Qwen + PEFT integration cho ca 6 method.
+- [x] Tiny-Qwen + PEFT integration cho ca 7 method.
 - [x] Chat protocol, EOS/multi-stop, context-disjoint reservations va regression tests.
 - [x] Job plans, one-worker/GPU, locks, stop-on-error, validated resume/import.
 - [x] Notebook va summary/runbook; mac dinh khong train.
-- [ ] Smoke Qwen1.5B cua protocol v3 (smoke v1 khong duoc tai su dung).
+- [ ] Smoke Qwen1.5B cua protocol v4 (smoke v1 khong duoc tai su dung).
 - [ ] Full development matrix va review failure modes.
 - [ ] Freeze clean implementation sau dev; full held-out confirmation.
 - [ ] Ket luan empirical Week 9 NLL gate.

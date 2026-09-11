@@ -2475,7 +2475,7 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
             raise ValueError(f"3B runner requires dataset.{field}")
     task = str(dataset.get("task", dataset.get("subset", ""))).lower()
     if task == "generation":
-        if method not in {"raw", "freshness", "alignfed_calibration", "rift", "rift_diag", "rift_core"}:
+        if method not in {"raw", "freshness", "alignfed_calibration", "spectral_surgery", "rift", "rift_diag", "rift_core"}:
             raise ValueError("method is not validated for the Week 9 generative protocol")
         for key in ("component_score_objective", "calibration_gate_objective", "monitor_objective"):
             if experiment.get(key) != "label_nll":

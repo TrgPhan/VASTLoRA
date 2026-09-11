@@ -15,7 +15,7 @@ def jobs(tmp_path):
 
 
 def test_matrix_budgets_and_plan_only_do_not_launch(monkeypatch, tmp_path):
-    for phase, count, split in (("development", 36, "validation"), ("confirmation", 72, "test")):
+    for phase, count, split in (("development", 42, "validation"), ("confirmation", 84, "test")):
         matrix = runner.load_matrix(phase)
         specs = list(runner.specs(matrix, tmp_path))
         assert len(specs) == count

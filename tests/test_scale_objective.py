@@ -129,6 +129,19 @@ def test_additive_sensitivity_is_independent_of_singular_value(sigma) -> None:
     assert result.signed_sensitivities["layer"].item() == pytest.approx(-2.)
 
 
+def test_stable_sensitivity_matches_week8_division_away_from_zero():
+    model = ToyModel()
+    updates = {"layer": CompactSVD(torch.ones(1, 1), torch.tensor([0.03]),
+                                  torch.tensor([[1.], [0.]]))}
+    batches = [({"x": torch.tensor([[x, 0.]]), "target": torch.tensor([[y]])}, weight)
+               for x, y, weight in [(1., 1., 1.), (2., -3., 2.)]]
+    old = sum(score_compact_components_with_hooks(model, updates, batch).scores["layer"].abs()
+              / updates["layer"].s.abs().clamp_min(1e-8) * weight for batch, weight in batches)
+    old /= sum(weight for _, weight in batches)
+    current = score_compact_component_sensitivities_microbatched(model, updates, batches)
+    torch.testing.assert_close(current.sensitivities["layer"], old)
+
+
 def test_filter_retains_global_component_gain_mass() -> None:
     innovations = {
         "first": CompactSVD(torch.eye(3), torch.ones(3), torch.eye(3)),

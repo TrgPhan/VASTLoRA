@@ -1,5 +1,5 @@
 {
-  "name": "rift-week9-generative-development-v3",
+  "name": "rift-week9-generative-development-v4",
   "phase": "development",
   "primary_target": "rift_core",
   "required_schema_version": 5,
@@ -25,6 +25,19 @@
     "fedrot_align_schedule": "alternating",
     "fedrot_align_matrix": "a",
     "fedrot_rotation_lambda": 1,
+    "alignfed_calibration_scales": [1.0, 0.5, 0.25, 0.125],
+    "spectral_surgery": {
+      "policy": "smooth_abs",
+      "core_frac": 0.2,
+      "noise_frac": 0.2,
+      "min_core_k": 1,
+      "amp_factor": 1.25,
+      "sup_factor": 0.8,
+      "mid_factor": 1.0,
+      "smooth_temperature": 0.35,
+      "smooth_center_q": 0.5,
+      "preserve_energy": "l1"
+    },
     "rift_component_gain_mass": 1,
     "rift_gate_min_staleness": 4,
     "rift_gate_selection": "largest_safe_scale",
@@ -116,6 +129,7 @@
     "raw",
     "freshness",
     "alignfed_calibration",
+    "spectral_surgery",
     "rift",
     "rift_diag",
     "rift_core"
@@ -134,13 +148,16 @@
     "baselines": [
       "raw",
       "freshness",
-      "alignfed_calibration"
+      "alignfed_calibration",
+      "spectral_surgery"
     ],
     "safety": "report harmful/late harmful and coverage; do not infer full thesis GO from NLL gate"
   },
   "notes": [
     "Raw is exact incoming product-space addition BEFORE the common rank cap; not an official FedEx baseline.",
     "Whole gate is alignfed_calibration, not full AlignFed.",
+    "Spectral is per-return spectral_surgery smooth_abs/L1 from the Week 8 final board, not spectral_filter or spectral_surgery_posthoc. Its small-singular-value numerical fix is retained.",
+    "These matched controls follow Week 8 confirmation v3 (source commit 5d34c8414b295d8a013658d8fd94355063033db9); the new response-NLL task and clean runtime are not a bitwise replay of that cohort.",
     "Calibration and monitor use mean per-example response NLL including EOS; final primary NLL is total response loss / total response tokens.",
     "Length filtering and context-group split run before experiment sampling; no silent target truncation.",
     "Dev uses validation, confirmation uses test; freeze config and code before running confirmation.",

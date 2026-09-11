@@ -216,7 +216,25 @@ Notebook cache tokenizer that truoc tests, dat REQUIRE_WEEK9_TOKENIZER=1 de
 khong skip integration test khi thieu cache. Test nay chi dung tokenizer that
 va tiny random PEFT model tren CPU, KHONG tai pretrained model weights.
 Khi san sang: MODE='smoke', RUN_TRAINING=True; review stop rate/predictions/NLL.
-Sau do MODE='development'. Chi doi MODE='confirmation' sau khi review dev va
+Notebook khoa Qwen2.5-1.5B-Instruct NF4; doi model can cohort/config version moi.
+
+| MODE | So job duoc chon | Muc dich |
+|---|---:|---|
+| preflight | 36 plans, khong train | Audit du lieu/config full dev; RUN_TRAINING phai False |
+| smoke | 6 | Seed9001, 1+5 returns, eval4; chi test pipeline/GPU |
+| pilot | 6 | Seed9101, non-IID, full dev budget 8+64 returns, eval128 |
+| development | 36 | 3 seeds x 2 regimes x 6 methods, eval128 |
+| confirmation | 72 | 6 seeds x 2 regimes x 6 methods, eval256 held-out |
+
+Sau smoke, dung MODE='pilot' de thu mot seed voi budget that. Pilot va development
+cung root week9_v3_development va manifest 36 jobs: job pilot hoan tat hop le se
+duoc skip khi chay development. Report pilot van thieu30 jobs la dung, khong phai
+loi va khong duoc xem la confirmation. Smoke co root rieng, khong tron vao dev.
+MAX_JOBS chi gioi han so job moi trong phien, khong loai seed khoi analysis.
+Moi lan doi MODE, chay lai settings va cac cell phia sau. Muon tiep tuc o phien
+Kaggle moi, attach ZIP da giai nen vao input va them root vao RESUME_ROOTS.
+
+Chi doi MODE='confirmation' sau khi review dev va
 dat CONFIRM_PROTOCOL_FROZEN=True; freeze ca config, implementation, primary target.
 Model weights chi precache khi RUN_TRAINING=True. Notebook zip artifacts cuoi cung.
 

@@ -89,6 +89,9 @@ sang v3 va output root moi; ngan sach, seed va thuat toan method khong doi.
 ## Kiem tra v3
 
 - Regression ngay2026-09-12: 140 tests pass, gom ca real-tokenizer tests (khong skip).
+- Clean checkout `3f9c5b226298996419308d67d493bcf35f506d8b`: them48 tests
+  real-tokenizer/analyzer/launcher pass voi REQUIRE_WEEK9_TOKENIZER=1; tao du72
+  confirmation job configs qua --plan-only. Notebook pin commit nay.
 - Tokenizer Qwen that: flat IDs, prompt masking, response/EOS, overlength filter;
   tiny PEFT teacher-forcing NLL va backward. Khong tai pretrained model weights.
 - Schema tests bo tung29 cot bat buoc giua events va2 eval CSV; them CSV rong/

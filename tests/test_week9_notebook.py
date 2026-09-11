@@ -31,6 +31,15 @@ def test_week9_notebook_defaults_to_no_training_with_frozen_checkout():
     assert re.fullmatch(r"[0-9a-f]{40}", literals["REPO_REF"])
     frozen = subprocess.check_output(["git", "show", literals["REPO_REF"] + ":scripts/run_week9_generation.py"], cwd=ROOT)
     assert b"--retry-incomplete" in frozen and b"--plan-only" in frozen
+    generation = subprocess.check_output(
+        ["git", "show", literals["REPO_REF"] + ":src/riftlora/scale/generation.py"], cwd=ROOT)
+    assert b"return_dict=False" in generation
+    subprocess.check_output(
+        ["git", "show", literals["REPO_REF"] + ":tests/test_week9_real_tokenizer.py"], cwd=ROOT)
+    source = "\n".join("".join(cell["source"]) for cell in code_cells())
+    assert 'REQUIRE_WEEK9_TOKENIZER="1"' in source
+    assert "tests/test_week9_real_tokenizer.py" in source
+    assert '"week9_v3_"' in source
 
 
 def test_week9_training_and_weight_download_are_guarded():

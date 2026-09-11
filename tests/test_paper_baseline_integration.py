@@ -126,6 +126,9 @@ def test_posthoc_runner_edits_once_after_training_and_records_pre_edit(monkeypat
     edits = []
 
     def edit(*args, **kwargs):
+        for batch, weight in args[2]:
+            assert batch["labels"].eq(TinyTokenizer.eos_token_id).any()
+            assert weight == batch["labels"].ne(-100).sum().item()
         edits.append(1)
         return original_edit(*args, **kwargs)
 

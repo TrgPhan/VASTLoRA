@@ -848,7 +848,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         )
         posthoc_batches = _make_classification_batches(
             model, tokenizer, calibration_gradient, dataset_config=dataset_config,
-            max_length=config["model"]["max_length"], batch_size=1,
+            max_length=config["model"]["max_length"], batch_size=1, include_eos=True,
         )
         server_state = edit_trained_adapter(
             model, server_state, posthoc_batches,
@@ -1418,6 +1418,7 @@ def _make_classification_batches(
     dataset_config: Mapping[str, Any],
     max_length: int,
     batch_size: int,
+    include_eos: bool = False,
 ) -> list[tuple[dict[str, torch.Tensor], float]]:
     if dataset is None or len(dataset) == 0:
         raise ValueError("calibration dataset must be non-empty")
@@ -1433,7 +1434,7 @@ def _make_classification_batches(
             dataset_config=dataset_config,
             max_length=max_length,
         )
-        if tokenizer.eos_token_id is not None:
+        if not include_eos and tokenizer.eos_token_id is not None:
             batch["labels"] = batch["labels"].masked_fill(
                 batch["labels"].eq(tokenizer.eos_token_id),
                 -100,

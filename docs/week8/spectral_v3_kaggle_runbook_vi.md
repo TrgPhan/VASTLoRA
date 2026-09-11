@@ -32,6 +32,10 @@ Bat Internet, chon T4 x2, upload notebook va Run All. Notebook clone GitHub
 va checkout dung commit, cai dependencies, pre-cache model/GLUE, chay tests
 va dry-run truoc khi chay 24 jobs. Moi GPU chay mot job doc lap.
 
+Image Kaggle co the cai san `torchao==0.10.0`, xung dot voi PEFT 0.20.
+Notebook go package optional nay truoc khi import PEFT. Thuc nghiem dung
+bitsandbytes NF4, khong dung torchao.
+
 `MAX_JOBS = None` chay moi job con thieu; co the gioi han so job moi moi phien.
 Neu het phien, luu output thanh Kaggle Dataset, attach vao phien tiep theo,
 dien `RESUME_ROOTS` bang thu muc chua cac task sst2/qnli/mnli_m/mnli_mm.

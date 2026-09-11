@@ -63,6 +63,31 @@ giu train2731 / dev594 / held-out611. Data preflight kiem tra du512 client
 examples +24/48/48 calibration cho tung seed/regime. Full trace du kien15 late
 events trong64 measured returns, so voi0 late events o smoke cu.
 
+## Kiem tra da hoan thanh
+
+- 100 tests pass: Week9 generation/analyzer/launcher/notebook, task classification,
+  shared objective, core repair, matrix runner, paper-baseline integration va Spectral v3.
+- 27 tests Week9 generation/analyzer/launcher pass them trong clean detached
+  checkout `188349cd2e828c4f9d723dc134bac4599f0a17b7`.
+- Notebook pass nbformat validation; 5 code cells compile, execution_count=null,
+  khong co output training gia; RUN_TRAINING=False.
+- Dry-run du36 development +72 confirmation, tat ca15 measured late events.
+- Data-only preflight cho ca3 dev seeds va6 confirmation seeds, moi seed ca2 regimes;
+  du512 client examples,24/48/48 calibration va128/256 eval examples.
+- Analyzer moi doc lai du6 smoke v1: SMOKE_ONLY,0 missing,6 dirty-provenance warnings.
+  Khong doi chung thanh clean confirmation hay che generation-limit100%.
+
+Lenh regression (khong tai/train Qwen1.5B; integration dung tiny random models):
+
+```powershell
+python -m pytest tests/test_week9_generation.py tests/test_week9_analysis.py tests/test_week9_launcher.py tests/test_week9_notebook.py tests/test_kaggle_3b_tasks.py tests/test_scale_objective.py tests/test_core_repair.py tests/test_week8_matrix_runner.py tests/test_paper_baseline_integration.py tests/test_spectral_v3_confirmation.py -q
+```
+
+Artifacts audit local: `outputs/week9_v2_final_preflight_development/data_audit.json`
+va `outputs/week9_v2_final_preflight_confirmation/data_audit.json`.
+Notebook pin runtime commit tren, khong checkout main dong. Ket qua chay tren
+mot commit khac khong tu dong duoc skip/import vao cohort cua notebook.
+
 ## Chay tiep va doc ket qua
 
 Xem [protocol va runbook](week9_generation_protocol_vi.md) va

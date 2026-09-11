@@ -25,6 +25,10 @@ scale = [
     "bitsandbytes>=0.45",
     "peft>=0.14",
 ]
+generation = [
+    "rouge-score>=0.1.2",
+    "filelock>=3.13",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

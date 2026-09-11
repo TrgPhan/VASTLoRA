@@ -1,0 +1,152 @@
+{
+  "name": "rift-week9-generative-confirmation-v2",
+  "phase": "confirmation",
+  "primary_target": "rift_core",
+  "required_schema_version": 5,
+  "description": "Short Dolly instruction QA; token NLL and greedy ROUGE-L; new generative evidence.",
+  "runner": {
+    "script": "scripts/run_kaggle_3b.py",
+    "buffer_size": 1,
+    "schedule_mode": "async"
+  },
+  "experiment": {
+    "warmup_returns": 8,
+    "collected_returns": 64,
+    "calibration_sampling": "stratified",
+    "calibration_gradient_examples": 24,
+    "calibration_gate_examples": 48,
+    "monitor_examples": 48,
+    "calibration_gradient_batch_size": 1,
+    "eval_batch_size": 1,
+    "component_score_objective": "label_nll",
+    "calibration_gate_objective": "label_nll",
+    "monitor_objective": "label_nll",
+    "harm_epsilon": 0.000001,
+    "fedrot_align_schedule": "alternating",
+    "fedrot_align_matrix": "a",
+    "fedrot_rotation_lambda": 1,
+    "rift_component_gain_mass": 1,
+    "rift_gate_min_staleness": 4,
+    "rift_gate_selection": "largest_safe_scale",
+    "rift_gate_confidence_z": 0.25,
+    "rift_max_mean_increase": 0,
+    "rift_step_scales": [
+      1,
+      0.5,
+      0.25
+    ],
+    "rift_include_freshness_fallback": true,
+    "late_tau": 4,
+    "extreme_tau": 8,
+    "rift_core": {
+      "steps": 3,
+      "learning_rate": 0.03,
+      "radius": 0.5,
+      "proximal_weight": 0.01,
+      "delay_scale": 8
+    }
+  },
+  "tasks": [
+    {
+      "name": "dolly_short_qa",
+      "run_name": "dolly_short_qa",
+      "task": "generation",
+      "base_config": "configs/local_1_5b_rift_development.json",
+      "hub_path": "databricks/databricks-dolly-15k",
+      "revision": "bdd27f4d94b9c1f951818a7da7fd7aeea5dbff1a",
+      "subset": null,
+      "train_split": "train",
+      "validation_split": "validation",
+      "eval_split": "test",
+      "eval_offset": 0,
+      "eval_shuffle_seed": 314159,
+      "eval_examples": 256,
+      "max_train_examples": 512,
+      "label_column": "label",
+      "categories": [
+        "open_qa",
+        "closed_qa"
+      ],
+      "split_salt": 9000,
+      "max_prompt_tokens": 192,
+      "max_response_tokens": 64,
+      "prompt_format": "chat_v1",
+      "reserve_context_groups": true,
+      "max_new_tokens": 128,
+      "model_overrides": {
+        "max_length": 256
+      }
+    }
+  ],
+  "regimes": [
+    {
+      "name": "noniid_high_staleness",
+      "partition_mode": "label_shard",
+      "client_ranks": [
+        2,
+        4,
+        8,
+        4
+      ],
+      "compute_times": [
+        1,
+        2,
+        5,
+        10
+      ]
+    },
+    {
+      "name": "iid_high_staleness",
+      "partition_mode": "iid",
+      "client_ranks": [
+        2,
+        4,
+        8,
+        4
+      ],
+      "compute_times": [
+        1,
+        2,
+        5,
+        10
+      ]
+    }
+  ],
+  "methods": [
+    "raw",
+    "freshness",
+    "alignfed_calibration",
+    "rift",
+    "rift_diag",
+    "rift_core"
+  ],
+  "seeds": [
+    9201,
+    9202,
+    9203,
+    9204,
+    9205,
+    9206
+  ],
+  "gates": {
+    "minimum_paired_seeds": 6,
+    "minimum_late_events": 8,
+    "maximum_token_nll_increase": 0.05,
+    "minimum_acceptance_rate": 0.5,
+    "primary": "paired upper CI95 of target-minus-baseline token NLL <=0.05 for every declared baseline",
+    "baselines": [
+      "raw",
+      "freshness",
+      "alignfed_calibration"
+    ],
+    "safety": "report harmful/late harmful and coverage; do not infer full thesis GO from NLL gate"
+  },
+  "notes": [
+    "Raw is exact incoming product-space addition BEFORE the common rank cap; not an official FedEx baseline.",
+    "Whole gate is alignfed_calibration, not full AlignFed.",
+    "Calibration and monitor use mean per-example response NLL including EOS; final primary NLL is total response loss / total response tokens.",
+    "Length filtering and context-group split run before experiment sampling; no silent target truncation.",
+    "Dev uses validation, confirmation uses test; freeze config and code before running confirmation.",
+    "ROUGE-L/exact match on free-form QA are secondary lexical diagnostics, not factual accuracy."
+  ]
+}

@@ -1162,7 +1162,11 @@ Current status:
 - infrastructure ready: task/regime/method/seed overlay runner, QNLI column compatibility,
   paired CI95 analyzer, completeness guard, acceptance gate, and hard-slice verdict
   are implemented;
-- GPU matrix is pending, so Week 8 has not yet earned a final empirical GO;
+- the Qwen 1.5B confirmation v3 board now contains four evaluation views with
+  six seeds and eight methods (192 runs). RIFT-Core has the lowest mean class
+  NLL across those views; this is not a final empirical GO because some local
+  runs have dirty provenance and the schedule has only seven measured late
+  events against the declared minimum of eight;
 - MNLI-m/mm evaluator is implemented with three-way label scoring, but its claim
   remains conditional on matched/mismatched validation and calibration checks;
 - the 3B model runner intentionally uses immediate async `buffer_size=1` until
@@ -1180,6 +1184,38 @@ Deliverables:
 Exit criterion:
 
 - RIFT does not improve classification by damaging NLL badly.
+
+Implementation update (2026-09-11):
+
+- See [Week 9 protocol and runbook](docs/week9/week9_generation_protocol_vi.md).
+- `scripts/run_week9_generation.py` reuses the shared async transport/filter/
+  gate/core-repair methods with response-token supervision instead of candidate
+  classification likelihood. Accuracy and class NLL are null for this task.
+- The initial task is length-filtered Dolly short instruction QA, with grouped
+  train/dev/test separation. Primary evaluation is response token NLL including
+  EOS and perplexity; greedy ROUGE-L and exact match are secondary diagnostics.
+- Controls: `raw` (exact product addition before the shared rank cap),
+  `freshness`, `alignfed_calibration` (whole-update gate); candidates: `rift`,
+  `rift_diag`, `rift_core`. These names do not imply full FedEx/AlignFed fidelity.
+- Development: 3 seeds x 2 regimes x 6 methods. Confirmation: 6 new seeds x
+  2 regimes x 6 methods. The full schedule uses 8 warmup + 64 measured returns
+  and dry-run predicts 15 measured late events per run.
+- `scripts/analyze_week9_generation.py` checks manifests, paired data, token
+  loss sums, completeness and clean provenance. Its NLL gate is a paired CI95
+  upper bound <= 0.05 nats/token against each declared control, with minimum
+  acceptance/late-event coverage. Passing this gate is not a global thesis GO.
+- Infrastructure and smoke validation do not replace the full development and
+  held-out runs. Their current execution status is recorded in the runbook.
+- Protocol v2 uses pinned Qwen chat formatting, separate reference/generation
+  token budgets and context-disjoint calibration roles. The old v1 six-job smoke
+  is diagnostic only, not reusable evidence for the new protocol.
+- The launcher supports per-GPU jobs, validated skip/import, interruption handling
+  and explicit partial-run restart. The Week 9 Kaggle notebook defaults to
+  preflight only. Long training jobs remain intentionally pending.
+- See [Week 9 results and remaining work](docs/week9/week9_results_summary_vi.md).
+  Generative-task training tests do not themselves establish that classification-
+  trained checkpoints preserve generation; that literal forgetting claim needs
+  a separate frozen-checkpoint cross-task evaluation.
 
 ## Week 10 - Ablations and stress tests
 

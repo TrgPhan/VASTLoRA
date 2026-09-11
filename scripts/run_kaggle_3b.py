@@ -138,11 +138,16 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
     dataset_kwargs = {}
     if dataset_config.get("revision") is not None:
         dataset_kwargs["revision"] = str(dataset_config["revision"])
-    raw = load_dataset(
-        dataset_config["hub_path"],
-        dataset_config.get("subset"),
-        **dataset_kwargs,
-    )
+    generation_audit = None
+    if dataset_config.get("task") == "generation":
+        from riftlora.scale.generation import load_instruction_data
+        raw, generation_audit = load_instruction_data(config)
+    else:
+        raw = load_dataset(
+            dataset_config["hub_path"],
+            dataset_config.get("subset"),
+            **dataset_kwargs,
+        )
     train_split = dataset_config["train_split"]
     eval_split = dataset_config.get("eval_split", dataset_config["validation_split"])
     eval_shuffle_seed = dataset_config.get("eval_shuffle_seed", seed)
@@ -189,7 +194,12 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
     max_train_examples = int(dataset_config["max_train_examples"])
     if reserved_total + max_train_examples > len(train):
         raise ValueError("reserved calibration/monitor plus max_train_examples exceeds train data")
-    train, calibration_splits = _reserve_calibration_splits(
+    reserve_fn = _reserve_calibration_splits
+    if dataset_config.get("task") == "generation" and dataset_config.get("reserve_context_groups", False):
+        from functools import partial
+        from riftlora.scale.generation import reserve_grouped_splits
+        reserve_fn = partial(reserve_grouped_splits, reserve_fn=_reserve_calibration_splits)
+    train, calibration_splits = reserve_fn(
         train,
         label_column=dataset_config["label_column"],
         split_sizes=(
@@ -271,6 +281,11 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
             batch_size=gradient_batch_size,
         )
         component_score_loss_fn = None
+        if dataset_config.get("task") == "generation":
+            from riftlora.scale.generation import response_mean_loss
+            component_score_loss_fn = lambda target_model, batch: response_mean_loss(
+                target_model, batch, _supervised_suffix_logits
+            )
     server_state = _state_to_cpu(empty_adapter_state(model))
     snapshots: dict[int, dict[str, CompactSVD]] = {0: server_state}
     histories = {
@@ -293,7 +308,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         rank_rtol=experiment["rank_rtol"],
     )
 
-    baseline, baseline_details = evaluate_classification(
+    baseline, baseline_details = evaluate_task(
         model,
         tokenizer,
         validation,
@@ -869,7 +884,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
             "harmful_metrics_scope": "training_returns_before_posthoc_edit",
             "selection": "fixed_policy_no_evaluation_selection",
         }
-    final, final_details = evaluate_classification(
+    final, final_details = evaluate_task(
         model,
         tokenizer,
         validation,
@@ -969,13 +984,14 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         "final_class_nll": final["class_nll"],
         "final_label_nll": final["label_nll"],
         "final_eos_nll": final["eos_nll"],
-        "accuracy_change_pp": 100.0 * (final["accuracy"] - baseline["accuracy"]),
+        "accuracy_change_pp": (100.0 * (final["accuracy"] - baseline["accuracy"])
+                               if final["accuracy"] is not None else None),
         "nll_change": final["nll"] - baseline["nll"],
-        "label_nll_change": final["label_nll"] - baseline["label_nll"],
+        "label_nll_change": _optional_difference(final["label_nll"], baseline["label_nll"]),
         "binary_nll_change": _optional_difference(
             final["binary_nll"], baseline["binary_nll"]
         ),
-        "class_nll_change": final["class_nll"] - baseline["class_nll"],
+        "class_nll_change": _optional_difference(final["class_nll"], baseline["class_nll"]),
         "mean_local_loss": _mean([row["local_loss"] for row in event_rows]),
         "mean_staleness": _mean(staleness_values),
         "max_staleness": max(staleness_values, default=0),
@@ -1086,6 +1102,22 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         "peak_cuda_memory_gib": peak_memory,
         "monitor_cache_hits": monitor_cache_hits,
     }
+    if generation_audit is not None:
+        for prefix, values in (("baseline", baseline), ("final", final)):
+            for key in ("token_nll", "perplexity", "mean_example_nll", "rouge_l", "exact_match",
+                        "generation_limit_rate", "response_tokens"):
+                metrics[f"{prefix}_{key}"] = values[key]
+        generation_audit["selected_source_ids"] = {
+            name: list(data["source_id"]) if data is not None else []
+            for name, data in (("clients", train), ("gradient", calibration_gradient),
+                               ("gate", calibration_gate), ("monitor", monitor), ("evaluation", validation))
+        }
+        if dataset_config.get("reserve_context_groups", False):
+            generation_audit["selected_group_ids"] = {
+                name: list(data["group_id"]) if data is not None else []
+                for name, data in (("clients", train), ("gradient", calibration_gradient),
+                                   ("gate", calibration_gate), ("monitor", monitor), ("evaluation", validation))
+            }
     return {
         "schema_version": 5,
         "method": method,
@@ -1102,6 +1134,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         "spectral_posthoc": posthoc_diagnostics,
         "config": config,
         "data_diagnostics": {
+            "generation": generation_audit,
             "calibration_gradient_labels": _dataset_label_histogram(
                 calibration_gradient, label_column
             ),
@@ -1247,7 +1280,7 @@ def _train_client(
                 reduction="none",
             )
             label_mask = shifted_labels.ne(-100)
-            if tokenizer.eos_token_id is not None:
+            if tokenizer.eos_token_id is not None and dataset_config.get("task") != "generation":
                 label_mask &= shifted_labels.ne(tokenizer.eos_token_id)
             loss = (
                 (token_loss * label_mask).sum()
@@ -1263,6 +1296,13 @@ def _train_client(
         optimizer.step()
     optimizer.zero_grad(set_to_none=True)
     return _mean(losses)
+
+
+def evaluate_task(model, tokenizer, dataset, **kwargs):
+    if kwargs["dataset_config"].get("task") == "generation":
+        from riftlora.scale.generation import evaluate_generation
+        return evaluate_generation(model, tokenizer, dataset, suffix_logits=_supervised_suffix_logits, **kwargs)
+    return evaluate_classification(model, tokenizer, dataset, **kwargs)
 
 
 @torch.no_grad()
@@ -1434,12 +1474,15 @@ def _make_classification_batches(
             dataset_config=dataset_config,
             max_length=max_length,
         )
-        if not include_eos and tokenizer.eos_token_id is not None:
+        if (not include_eos and tokenizer.eos_token_id is not None
+                and dataset_config.get("task") != "generation"):
             batch["labels"] = batch["labels"].masked_fill(
                 batch["labels"].eq(tokenizer.eos_token_id),
                 -100,
             )
         weight = float(batch["labels"].ne(-100).sum().item())
+        if dataset_config.get("task") == "generation":
+            weight = float(batch["input_ids"].shape[0])
         if weight <= 0.0:
             raise ValueError("calibration batch has no supervised label tokens")
         batches.append((_move_batch(batch, _model_input_device(model)), weight))
@@ -1589,6 +1632,14 @@ def _per_example_classification_losses(
     with torch.inference_mode():
         for start in range(0, len(examples), batch_size):
             group = examples[start : start + batch_size]
+            if dataset_config.get("task") == "generation":
+                from riftlora.scale.generation import response_loss_values
+                if objective != "label_nll":
+                    raise ValueError("generation requires response label_nll, not candidate classification loss")
+                batch = _collate_examples(tokenizer, group, dataset_config=dataset_config, max_length=max_length)
+                sums, counts = response_loss_values(model, _move_batch(batch, device), _supervised_suffix_logits)
+                values.append((sums / counts).detach().cpu())
+                continue
             if objective in {"class_nll", "class_margin"}:
                 candidates = [
                     (item, candidate)
@@ -2001,6 +2052,9 @@ def _collate_examples(
     dataset_config: Mapping[str, Any],
     max_length: int,
 ):
+    if dataset_config.get("task") == "generation":
+        from riftlora.scale.generation import collate_generation
+        return collate_generation(tokenizer, examples, dataset_config, max_length)
     encoded: list[tuple[list[int], list[int]]] = []
     eos = tokenizer.eos_token or ""
     label_texts = _label_texts(dataset_config)
@@ -2039,6 +2093,8 @@ def _collate_examples(
 
 def _label_texts(dataset_config: Mapping[str, Any]) -> list[str]:
     task = str(dataset_config.get("task", dataset_config.get("subset", ""))).lower()
+    if task == "generation":
+        return list(dataset_config["categories"])
     expected = 3 if task == "mnli" else 2
     configured = dataset_config.get("label_texts")
     if configured is not None:
@@ -2418,6 +2474,21 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
         if field not in dataset:
             raise ValueError(f"3B runner requires dataset.{field}")
     task = str(dataset.get("task", dataset.get("subset", ""))).lower()
+    if task == "generation":
+        if method not in {"raw", "freshness", "alignfed_calibration", "rift", "rift_diag", "rift_core"}:
+            raise ValueError("method is not validated for the Week 9 generative protocol")
+        for key in ("component_score_objective", "calibration_gate_objective", "monitor_objective"):
+            if experiment.get(key) != "label_nll":
+                raise ValueError(f"generation requires {key}=label_nll")
+        if (len(dataset.get("categories", [])) < 2 or dataset.get("max_prompt_tokens", 0) < 1
+                or dataset.get("max_response_tokens", 0) < 2
+                or dataset["max_prompt_tokens"] + dataset["max_response_tokens"] > model["max_length"]):
+            raise ValueError("invalid generation category/token budgets")
+        if dataset.get("prompt_format", "plain_v1") not in {"plain_v1", "chat_v1"}:
+            raise ValueError("invalid generation prompt_format")
+        generation_budget = dataset.get("max_new_tokens", dataset["max_response_tokens"])
+        if not isinstance(generation_budget, int) or isinstance(generation_budget, bool) or generation_budget < 1:
+            raise ValueError("generation max_new_tokens must be a positive integer")
     if task == "sst2" and "text_column" not in dataset:
         raise ValueError("SST-2 config requires text_column")
     if task == "qnli":
@@ -2697,8 +2768,9 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
         CoreRepairConfig(**experiment.get("rift_core", {})).validate()
         if float(experiment["server_update_weight"]) <= 0:
             raise ValueError("core repair requires positive server_update_weight")
-        if experiment.get("component_score_objective") != "class_nll":
-            raise ValueError("core repair requires component_score_objective=class_nll")
+        expected_objective = "label_nll" if task == "generation" else "class_nll"
+        if experiment.get("component_score_objective") != expected_objective:
+            raise ValueError(f"core repair requires component_score_objective={expected_objective}")
         if float(experiment.get("rift_component_gain_mass", 1.0)) != 1.0:
             raise ValueError("core repair comparator requires rift_component_gain_mass=1")
         if float(experiment.get("rift_minimum_predicted_gain", 0.0)) != 0.0:

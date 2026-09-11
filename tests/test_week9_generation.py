@@ -17,8 +17,8 @@ from riftlora.scale import generation
 class Tokenizer:
     pad_token_id, eos_token_id = 0, 2
     chat_template = "test-template"
-    def apply_chat_template(self, messages, *, tokenize, add_generation_prompt):
-        assert tokenize and add_generation_prompt and messages[0]["role"] == "user"
+    def apply_chat_template(self, messages, *, tokenize, add_generation_prompt, return_dict):
+        assert tokenize and add_generation_prompt and not return_dict and messages[0]["role"] == "user"
         return [1, 3, 4]
     def __call__(self, text, *, add_special_tokens):
         return {"input_ids": [1, 3, 4] if add_special_tokens else [5] * len(text.split())}
@@ -141,6 +141,15 @@ def test_broken_chat_tokenizer_fails_before_length_filter():
     tokenizer.chat_template = None
     with pytest.raises(ValueError, match="chat template"):
         generation.prepare_records([row(1)], tokenizer, config()["dataset"], 16)
+
+
+def test_unexpected_chat_return_type_is_not_counted_as_overlength():
+    from transformers import BatchEncoding
+    class BrokenTokenizer(Tokenizer):
+        def apply_chat_template(self, *args, **kwargs):
+            return BatchEncoding({"input_ids": [1, 3, 4], "attention_mask": [1, 1, 1]})
+    with pytest.raises(TypeError, match="flat list"):
+        generation.prepare_records([row(1)], BrokenTokenizer(), config()["dataset"], 16)
 
 
 def test_group_reservations_are_disjoint_and_reproducible():

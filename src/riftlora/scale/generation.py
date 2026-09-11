@@ -28,9 +28,13 @@ def prompt_ids(tokenizer, item, config):
     context = item.get("context", "").strip()
     if context:
         content += "\n\nContext:\n" + context
-    return tokenizer.apply_chat_template(
+    ids = tokenizer.apply_chat_template(
         [{"role": "user", "content": content}], tokenize=True, add_generation_prompt=True,
+        return_dict=False,
     )
+    if not isinstance(ids, list) or any(type(token) is not int for token in ids):
+        raise TypeError("chat template must return a flat list of integer token IDs")
+    return ids
 
 
 def stop_token_ids(model, tokenizer):
@@ -47,6 +51,10 @@ def group_split(item, salt):
     return ("train" if bucket < 0.7 else "validation" if bucket < 0.85 else "test"), digest
 
 
+class TokenBudgetError(ValueError):
+    pass
+
+
 def encode_example(tokenizer, item, config, max_length):
     prompt = prompt_ids(tokenizer, item, config)
     target = tokenizer(item["response"].strip(), add_special_tokens=False)["input_ids"]
@@ -55,7 +63,7 @@ def encode_example(tokenizer, item, config, max_length):
     target = target + [tokenizer.eos_token_id]
     if (len(prompt) > config["max_prompt_tokens"] or len(target) > config["max_response_tokens"]
             or len(prompt) + len(target) > max_length):
-        raise ValueError("generation example exceeds locked token budget; do not silently truncate")
+        raise TokenBudgetError("generation example exceeds locked token budget; do not silently truncate")
     return prompt, target
 
 
@@ -84,7 +92,7 @@ def prepare_records(records, tokenizer, config, max_length):
         seen.add(identity)
         try:
             encode_example(tokenizer, row, config, max_length)
-        except ValueError:
+        except TokenBudgetError:
             audit["overlength_rows"] += 1
             continue
         split, group = group_split(row, config["split_salt"])
@@ -108,6 +116,15 @@ def load_instruction_data(config):
     splits, audit = prepare_records(raw, tokenizer, ds, model["max_length"])
     if any(not rows for rows in splits.values()):
         raise ValueError(f"empty generation split: {audit}")
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    audit["collation_preflight"] = {}
+    for name, rows in splits.items():
+        batch = collate_generation(tokenizer, [(row, 0) for row in rows[:2]], ds, model["max_length"])
+        audit["collation_preflight"][name] = {
+            "examples": batch["input_ids"].shape[0], "width": batch["input_ids"].shape[1],
+            "supervised_tokens": batch["labels"].ne(-100).sum().item(),
+        }
     return DatasetDict({k: Dataset.from_list(v) for k, v in splits.items()}), audit
 
 

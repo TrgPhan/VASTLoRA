@@ -1,6 +1,6 @@
 # Week 9: generative/NLL matrix
 
-Ngay: 2026-09-11. Protocol v2. Pham vi: buoc tiep theo cua guide RIFT, sau classification Week 8.
+Ngay: 2026-09-12. Protocol v3. Pham vi: buoc tiep theo cua guide RIFT, sau classification Week 8.
 
 Trang thai: CODE_READY, full development/confirmation CHUA CHAY theo yeu cau.
 Xem [tong hop Week 9](week9_results_summary_vi.md) de phan biet smoke cu va protocol hien tai.
@@ -26,7 +26,7 @@ Revision khoa: `bdd27f4d94b9c1f951818a7da7fd7aeea5dbff1a`.
 Pilot chon `open_qa` va `closed_qa`. Filter chi dua tren category, prompt rong,
 trung prompt va token length; khong dua tren ket qua cua method nao.
 Qwen tokenizer: prompt toi da 192 tokens, response gom EOS toi da 64 tokens.
-Prompt v2 dung chat template cua tokenizer Qwen da pin, chi dua instruction/context
+Prompt dung chat template cua tokenizer Qwen da pin, chi dua instruction/context
 vao user turn, mo assistant turn bang add_generation_prompt. Teacher forcing va
 greedy generation dung cung prompt token IDs. Reference ket thuc bang im_end/EOS;
 generation dung hop cua EOS tokenizer va danh sach stop tokens trong generation config.
@@ -48,10 +48,16 @@ Audit da chay tren du lieu that:
 | Nguon | 15011 |
 | Loai category khac | 9496 |
 | Trung prompt | 49 |
-| Qua ngan sach token | 1530 |
-| Train duoc giu | 2731 |
-| Development duoc giu | 594 |
-| Held-out duoc giu | 611 |
+| Qua ngan sach token | 2391 |
+| Train duoc giu | 2131 |
+| Development duoc giu | 456 |
+| Held-out duoc giu | 488 |
+
+Correction v3: v2 dem nham len(BatchEncoding)=2 thay vi so prompt tokens.
+V3 yeu cau return_dict=False va kiem tra flat integer IDs, sau do collate thu
+voi tokenizer that cho ca3 splits ngay trong --prepare-only. Audit v2 cu
+2731/594/611 khong hop le; KHONG import audit/result v2 vao cohort v3.
+Model, seeds, LoRA method math va cac ngan sach khai bao khong thay doi.
 
 Moi run reserve gradient/gate/monitor tu train truoc, roi lay client pool.
 V2 con loai context groups da vao mot role khoi cac role con lai. Nhieu cau hoi
@@ -134,33 +140,33 @@ evaluate cac classification checkpoints da freeze tren mot generative probe chun
 
 ```powershell
 python -m pip install -e ".[scale,dev,generation]"
-python -m pytest tests/test_week9_generation.py tests/test_week9_analysis.py tests/test_week9_launcher.py -q
-python scripts/run_week9_generation.py --output-root outputs/week9_v2_dev --prepare-only
-python scripts/run_week9_generation.py --output-root outputs/week9_v2_dev --dry-run
-python scripts/run_week9_generation.py --output-root outputs/week9_v2_dev --plan-only
+python scripts/run_week9_generation.py --output-root outputs/week9_v3_dev --prepare-only
+python -m pytest tests/test_week9_real_tokenizer.py tests/test_week9_generation.py tests/test_week9_analysis.py tests/test_week9_launcher.py -q
+python scripts/run_week9_generation.py --output-root outputs/week9_v3_dev --dry-run
+python scripts/run_week9_generation.py --output-root outputs/week9_v3_dev --plan-only
 ```
 
 Smoke local (6 jobs, seed9001, 1 warmup + 5 measured returns, eval4):
 
 ```powershell
-python scripts/run_week9_generation.py --smoke --output-root outputs/week9_v2_smoke --gpu 0
-python scripts/analyze_week9_generation.py --input-dir outputs/week9_v2_smoke
+python scripts/run_week9_generation.py --smoke --output-root outputs/week9_v3_smoke --gpu 0
+python scripts/analyze_week9_generation.py --input-dir outputs/week9_v3_smoke
 ```
 
 Development du ma tran:
 
 ```powershell
-python scripts/run_week9_generation.py --output-root outputs/week9_v2_dev --gpu 0 --gpu 1
-python scripts/analyze_week9_generation.py --input-dir outputs/week9_v2_dev
+python scripts/run_week9_generation.py --output-root outputs/week9_v3_dev --gpu 0 --gpu 1
+python scripts/analyze_week9_generation.py --input-dir outputs/week9_v3_dev
 ```
 
 Sau khi review dev va freeze code/config, chay confirmation tren clean checkout:
 
 ```powershell
-python scripts/run_week9_generation.py --phase confirmation --output-root outputs/week9_v2_confirmation --prepare-only
-python scripts/run_week9_generation.py --phase confirmation --output-root outputs/week9_v2_confirmation --dry-run
-python scripts/run_week9_generation.py --phase confirmation --output-root outputs/week9_v2_confirmation --gpu 0 --gpu 1
-python scripts/analyze_week9_generation.py --input-dir outputs/week9_v2_confirmation --target rift_core
+python scripts/run_week9_generation.py --phase confirmation --output-root outputs/week9_v3_confirmation --prepare-only
+python scripts/run_week9_generation.py --phase confirmation --output-root outputs/week9_v3_confirmation --dry-run
+python scripts/run_week9_generation.py --phase confirmation --output-root outputs/week9_v3_confirmation --gpu 0 --gpu 1
+python scripts/analyze_week9_generation.py --input-dir outputs/week9_v3_confirmation --target rift_core
 ```
 
 Mot GPU thi chi dung --gpu 0. --gpu 0 --gpu 1 la hai job doc lap, KHONG ghep
@@ -178,7 +184,9 @@ nhan full development 36 jobs tren GPU nay.
 1. Chay lai dung lenh va output root: completed job du JSON + hai eval CSV + events
    duoc validate roi skip. Kiem tra ca token sums, PPL, sequence metrics, measured
    boundary, harmful/late harmful tu monitor va provenance. Chi co result.json la chua du.
-2. --resume-root /kaggle/input/.../week9_v2_confirmation: import completed runs dung
+   CSV thieu cot/khong parse duoc se duoc ghi thanh issue, khong crash ca analyzer.
+   runs.csv luon duoc ghi lai, ke ca bang rong co header khi0 run hop le.
+2. --resume-root /kaggle/input/.../week9_v3_confirmation: import completed runs dung
    config/seed/implementation tu input dataset. Khong import dirty/v1/mixed commit.
 3. --max-jobs 2 chi gioi han 2 job MOI trong phien; manifest van giu du 36/72.
 4. Neu bi ngat giua job: mac dinh dung va chi ro thu muc partial. Them
@@ -204,6 +212,9 @@ launcher.json (wall time ca job), analysis_rift_core/{verdict.json,runs.csv,resu
 Dung `notebooks/kaggle_qwen_1_5b_rift_week9_generation.ipynb`, Internet on, T4 x2.
 Notebook clone GitHub, checkout commit co dinh, cai dependencies va test tiny PEFT
 truoc khi train. RUN_TRAINING=False mac dinh: Run All chi preflight va xuat report.
+Notebook cache tokenizer that truoc tests, dat REQUIRE_WEEK9_TOKENIZER=1 de
+khong skip integration test khi thieu cache. Test nay chi dung tokenizer that
+va tiny random PEFT model tren CPU, KHONG tai pretrained model weights.
 Khi san sang: MODE='smoke', RUN_TRAINING=True; review stop rate/predictions/NLL.
 Sau do MODE='development'. Chi doi MODE='confirmation' sau khi review dev va
 dat CONFIRM_PROTOCOL_FROZEN=True; freeze ca config, implementation, primary target.
@@ -220,7 +231,7 @@ Model weights chi precache khi RUN_TRAINING=True. Notebook zip artifacts cuoi cu
 - [x] Chat protocol, EOS/multi-stop, context-disjoint reservations va regression tests.
 - [x] Job plans, one-worker/GPU, locks, stop-on-error, validated resume/import.
 - [x] Notebook va summary/runbook; mac dinh khong train.
-- [ ] Smoke Qwen1.5B cua protocol v2 (smoke v1 khong duoc tai su dung).
+- [ ] Smoke Qwen1.5B cua protocol v3 (smoke v1 khong duoc tai su dung).
 - [ ] Full development matrix va review failure modes.
 - [ ] Freeze clean implementation sau dev; full held-out confirmation.
 - [ ] Ket luan empirical Week 9 NLL gate.

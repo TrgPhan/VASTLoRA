@@ -16,6 +16,12 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from run_week9_generation import specs
 from week9_artifacts import validate_run
 
+RUN_COLUMNS = (
+    "regime", "method", "seed", "token_nll", "perplexity", "rouge_l", "exact_match",
+    "backbone_nll_change", "harmful", "late_harmful", "late_events", "acceptance",
+    "runtime_seconds", "peak_vram_gib", "generation_limit_rate", "git_commit",
+)
+
 
 def paired_interval(values):
     x = np.asarray(values, dtype=float)
@@ -119,9 +125,10 @@ def main():
     output.mkdir(exist_ok=True)
     (output / "verdict.json").write_text(json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")
     text = ["# Week 9 generative results", "", report["status"], "", report["scope"], ""]
+    # Always replace the previous table, even when validation rejects every run.
+    frame = pd.DataFrame(report["rows"], columns=RUN_COLUMNS)
+    frame.to_csv(output / "runs.csv", index=False)
     if report["rows"]:
-        frame = pd.DataFrame(report["rows"])
-        frame.to_csv(output / "runs.csv", index=False)
         summary = frame.groupby(["regime", "method"]).agg(
             seeds=("seed", "count"), token_nll=("token_nll", "mean"), nll_sd=("token_nll", "std"),
             perplexity=("perplexity", "mean"), rouge_l=("rouge_l", "mean"),

@@ -22,7 +22,7 @@ def load_matrix(phase="development", smoke=False):
     if smoke:
         if phase != "development":
             raise ValueError("smoke uses development data only")
-        matrix.update(name="rift-week9-generative-smoke-v2", phase="smoke", seeds=[9001])
+        matrix.update(name="rift-week9-generative-smoke-v3", phase="smoke", seeds=[9001])
         matrix["regimes"] = matrix["regimes"][:1]
         matrix["experiment"].update(warmup_returns=1, collected_returns=5,
                                      calibration_gradient_examples=2, calibration_gate_examples=2,

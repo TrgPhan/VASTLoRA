@@ -10,6 +10,25 @@ import pandas as pd
 import run_week8_classification_matrix as matrix_runner
 
 
+EVAL_COLUMNS = (
+    "source_id", "reference", "nll_sum", "response_tokens", "response_nll",
+    "rouge_l", "exact_match", "generated_tokens", "hit_generation_limit",
+)
+EVENT_COLUMNS = (
+    "event", "measured", "current_loss", "accepted_loss", "staleness",
+    "harmful_update", "late_harmful_update", "update_accepted",
+    "client_id", "base_version", "arrival_version",
+)
+
+
+def _read_csv(path, required, **kwargs):
+    frame = pd.read_csv(path, **kwargs)
+    missing = sorted(set(required) - set(frame.columns))
+    if missing:
+        raise ValueError(f"{path.name}: missing required columns: {', '.join(missing)}")
+    return frame
+
+
 def _close(actual, expected, label):
     if not math.isfinite(float(actual)) or not math.isclose(float(actual), float(expected), rel_tol=1e-6, abs_tol=1e-8):
         raise ValueError(f"{label} does not match artifacts")
@@ -50,7 +69,7 @@ def validate_run(path, *, config, method, seed, matrix):
             raise ValueError("contexts overlap between client/calibration/monitor/eval roles")
     reference_identity = None
     for stage in ("baseline", "final"):
-        details = pd.read_csv(path.parent / f"{stage}_eval_details.csv", keep_default_na=False)
+        details = _read_csv(path.parent / f"{stage}_eval_details.csv", EVAL_COLUMNS, keep_default_na=False)
         if len(details) != ds["eval_examples"] or details.source_id.tolist() != selected["evaluation"]:
             raise ValueError("evaluation count/IDs differ from sample manifest")
         numeric = details[["nll_sum", "response_tokens", "response_nll", "rouge_l", "exact_match", "generated_tokens"]].astype(float)
@@ -79,7 +98,7 @@ def validate_run(path, *, config, method, seed, matrix):
             raise ValueError("baseline and final references differ")
         reference_identity = identity
 
-    events = pd.read_csv(path.parent / "events.csv")
+    events = _read_csv(path.parent / "events.csv", EVENT_COLUMNS)
     total = exp["warmup_returns"] + exp["collected_returns"]
     if len(events) != total or events.event.tolist() != list(range(total)):
         raise ValueError("incomplete or reordered return trace")

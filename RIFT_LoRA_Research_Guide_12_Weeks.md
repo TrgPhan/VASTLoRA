@@ -1206,9 +1206,12 @@ Implementation update (2026-09-11):
   acceptance/late-event coverage. Passing this gate is not a global thesis GO.
 - Infrastructure and smoke validation do not replace the full development and
   held-out runs. Their current execution status is recorded in the runbook.
-- Protocol v2 uses pinned Qwen chat formatting, separate reference/generation
+- Protocol v3 fixes the v2 BatchEncoding/list contract and uses pinned Qwen chat formatting, separate reference/generation
   token budgets and context-disjoint calibration roles. The old v1 six-job smoke
   is diagnostic only, not reusable evidence for the new protocol.
+- The v2 dataset audit was invalid because prompt lengths were miscounted. V3
+  retains 2131 train / 456 validation / 488 test examples. Real-tokenizer
+  collation and tiny-model gradient tests now complement the mocked unit tests.
 - The launcher supports per-GPU jobs, validated skip/import, interruption handling
   and explicit partial-run restart. The Week 9 Kaggle notebook defaults to
   preflight only. Long training jobs remain intentionally pending.

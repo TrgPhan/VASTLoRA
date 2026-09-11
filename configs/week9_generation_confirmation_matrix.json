@@ -1,5 +1,5 @@
 {
-  "name": "rift-week9-generative-confirmation-v2",
+  "name": "rift-week9-generative-confirmation-v3",
   "phase": "confirmation",
   "primary_target": "rift_core",
   "required_schema_version": 5,

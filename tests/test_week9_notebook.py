@@ -35,6 +35,13 @@ def test_week9_notebook_defaults_to_no_training_with_frozen_checkout():
     assert re.fullmatch(r"[0-9a-f]{40}", literals["REPO_REF"])
     frozen = subprocess.check_output(["git", "show", literals["REPO_REF"] + ":scripts/run_week9_generation.py"], cwd=ROOT)
     assert b"--retry-incomplete" in frozen and b"--plan-only" in frozen
+    for phase in ("development", "confirmation"):
+        matrix = json.loads(subprocess.check_output([
+            "git", "show", literals["REPO_REF"] + f":configs/week9_generation_{phase}_matrix.json"
+        ], cwd=ROOT))
+        assert matrix["name"].endswith("-v4")
+        assert len(matrix["methods"]) == 7
+        assert {"spectral_surgery", "alignfed_calibration"}.issubset(matrix["gates"]["baselines"])
     generation = subprocess.check_output(
         ["git", "show", literals["REPO_REF"] + ":src/riftlora/scale/generation.py"], cwd=ROOT)
     assert b"return_dict=False" in generation

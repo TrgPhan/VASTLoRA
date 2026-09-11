@@ -10,7 +10,8 @@ Cap nhat 2026-09-12. Protocol hien tai v4; empirical Qwen1.5B van pending.
 - Spectral giu numerical fix additive sensitivity cho sigma nho; khong phai
   bitwise replay old commit. Objective la response NLL, khong phai class NLL.
 - 7 methods: smoke/pilot7, dev42, confirmation84. Spectral nam trong paired NLL gate.
-- Dung output week9_v4_*, khong import/tron v3; notebook se pin clean runtime moi.
+- Dung output week9_v4_*, khong import/tron v3; notebook pin runtime
+  `0b9523f571ba5217908acf5943c95642ff400a99`.
 - Tiny PEFT generation test da exercise ca spectral reweight va whole-update gate;
   chua co ket qua full Qwen1.5B v4 de xep hang hai control hay RIFT.
 - Kiem tra v4: 113 tests Week9/objective/core/spectral va 53 regression tests

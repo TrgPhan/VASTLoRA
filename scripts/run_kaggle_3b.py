@@ -47,6 +47,7 @@ from riftlora.scale import (
 )
 from riftlora.scale.tradeoff import reserved_train_eval_indices
 from riftlora.scale.core_repair import CoreRepairConfig, repair_compact_core
+from riftlora.scale.spectral_surgery import edit_trained_adapter
 
 
 DEFAULT_LABEL_TEXTS = {
@@ -69,6 +70,7 @@ METHODS = (
     "rift_diag",
     "spectral_filter",
     "spectral_surgery",
+    "spectral_surgery_posthoc",
     "alignfed_calibration",
 )
 
@@ -240,7 +242,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
             calibration_gradient_examples,
         )
     )
-    if calibration_gradient is None:
+    if calibration_gradient is None or method == "spectral_surgery_posthoc":
         gradient_batches = None
         component_score_loss_fn = None
     elif component_score_objective == "class_nll":
@@ -345,6 +347,8 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         accepted_method = (
             "freshness" if event_index < experiment["warmup_returns"] else method
         )
+        if accepted_method == "spectral_surgery_posthoc":
+            accepted_method = str(experiment.get("spectral_posthoc_base_method", "freshness"))
         current_state = snapshots[event.arrival_version]
         core_diagnostics: dict[str, float] = {}
         next_state: dict[str, CompactSVD] = {}
@@ -449,6 +453,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                     innovations,
                     sensitivities.sensitivities,
                     config=surgery_config,
+                    signed_sensitivities=sensitivities.signed_sensitivities,
                 )
                 selected_rank = sum(update.rank for update in edited.values())
                 next_state = _aggregate_scaled_updates(
@@ -835,6 +840,35 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         active_rank=experiment["server_max_rank"],
         initialize_free_directions=False,
     )
+    posthoc_diagnostics = None
+    if method == "spectral_surgery_posthoc":
+        pre_edit, _ = evaluate_classification(
+            model, tokenizer, validation, dataset_config=dataset_config,
+            max_length=config["model"]["max_length"], batch_size=experiment["eval_batch_size"],
+        )
+        posthoc_batches = _make_classification_batches(
+            model, tokenizer, calibration_gradient, dataset_config=dataset_config,
+            max_length=config["model"]["max_length"], batch_size=1,
+        )
+        server_state = edit_trained_adapter(
+            model, server_state, posthoc_batches,
+            config=SpectralSurgeryConfig(**experiment.get("spectral_surgery", {})),
+            target_modules=experiment.get("spectral_edit_target_modules", ["o_proj", "down_proj"]),
+            loss_fn=_answer_token_nll_loss,
+        )
+        load_compact_adapter_state(
+            model, server_state, active_rank=experiment["server_max_rank"],
+            initialize_free_directions=False,
+        )
+        posthoc_diagnostics = {
+            "pre_edit_metrics": pre_edit,
+            "base_method": experiment.get("spectral_posthoc_base_method", "freshness"),
+            "edit_objective": "answer_token_nll_including_eos",
+            "calibration_examples": len(calibration_gradient),
+            "edit_target_modules": experiment.get("spectral_edit_target_modules", ["o_proj", "down_proj"]),
+            "harmful_metrics_scope": "training_returns_before_posthoc_edit",
+            "selection": "fixed_policy_no_evaluation_selection",
+        }
     final, final_details = evaluate_classification(
         model,
         tokenizer,
@@ -1065,6 +1099,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         "git_worktree_dirty": _git_worktree_dirty(),
         "config_fingerprint": _config_fingerprint(config),
         "provenance": dict(config.get("provenance", {})),
+        "spectral_posthoc": posthoc_diagnostics,
         "config": config,
         "data_diagnostics": {
             "calibration_gradient_labels": _dataset_label_histogram(
@@ -1162,6 +1197,12 @@ def _supervised_suffix_logits(
     if shifted_logits.shape[:2] != shifted_labels.shape:
         raise ValueError("suffix logits and classification labels are misaligned")
     return shifted_logits, shifted_labels
+
+
+def _answer_token_nll_loss(model, batch: Mapping[str, torch.Tensor]) -> torch.Tensor:
+    """Teacher-forcing CE including EOS, without allocating prompt vocabulary logits."""
+    logits, labels = _supervised_suffix_logits(model, batch)
+    return F.cross_entropy(logits.transpose(1, 2), labels, ignore_index=-100)
 
 
 def _train_client(
@@ -2433,17 +2474,24 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
         "rift_diag",
         "spectral_filter",
         "spectral_surgery",
+        "spectral_surgery_posthoc",
     } and int(
         experiment.get("calibration_gradient_examples", 0)
     ) <= 0:
         raise ValueError(f"{method} requires calibration_gradient_examples > 0")
-    if method == "spectral_surgery":
+    if method in {"spectral_surgery", "spectral_surgery_posthoc"}:
         SpectralSurgeryConfig(**experiment.get("spectral_surgery", {})).validate()
         if int(experiment.get("calibration_gradient_batch_size", 1)) != 1:
             raise ValueError(
                 "spectral_surgery requires calibration_gradient_batch_size=1 "
                 "for exact per-example mean-absolute sensitivity"
             )
+    if method == "spectral_surgery_posthoc":
+        targets = experiment.get("spectral_edit_target_modules", ["o_proj", "down_proj"])
+        if not isinstance(targets, list) or not targets or not set(targets).issubset(model["target_modules"]):
+            raise ValueError("spectral edit targets must be a nonempty subset of model.target_modules")
+        if experiment.get("spectral_posthoc_base_method", "freshness") not in {"raw", "freshness"}:
+            raise ValueError("spectral_posthoc_base_method must be raw or freshness")
     fedrot_schedule = str(experiment.get("fedrot_align_schedule", "fixed_b"))
     if fedrot_schedule not in {"fixed", "fixed_b", "alternating"}:
         raise ValueError(

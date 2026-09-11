@@ -115,6 +115,18 @@ def test_mean_absolute_sensitivity_does_not_cancel_opposite_examples() -> None:
 
     assert signed.scores["layer"].item() == pytest.approx(0.0)
     assert magnitude.sensitivities["layer"].item() == pytest.approx(2.0)
+    assert magnitude.signed_sensitivities["layer"].item() == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize("sigma", [0.0, 1e-20, 1.0, 1e5])
+def test_additive_sensitivity_is_independent_of_singular_value(sigma) -> None:
+    innovation = CompactSVD(torch.ones(1, 1), torch.tensor([sigma]), torch.tensor([[1.], [0.]]))
+    result = score_compact_component_sensitivities_microbatched(
+        ToyModel(), {"layer": innovation},
+        [({"x": torch.tensor([[1., 0.]]), "target": torch.tensor([[1.]])}, 1.)],
+    )
+    assert result.sensitivities["layer"].item() == pytest.approx(2.)
+    assert result.signed_sensitivities["layer"].item() == pytest.approx(-2.)
 
 
 def test_filter_retains_global_component_gain_mass() -> None:

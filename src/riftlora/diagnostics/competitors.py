@@ -56,6 +56,16 @@ COMPETITOR_SPECS: dict[str, CompetitorSpec] = {
             "reweighting with fixed paper hyperparameters."
         ),
     ),
+    "spectral_surgery_posthoc": CompetitorSpec(
+        name="spectral_surgery_posthoc",
+        fidelity="post-hoc spectral editing of an FL-trained adapter; not original benchmark reproduction",
+        description="Answer-token calibration at the final adapter; fixed spectrum edit on selected modules.",
+    ),
+    "alignfed_reference": CompetitorSpec(
+        name="alignfed_reference",
+        fidelity="buffered equation reimplementation with explicit rank-linear and feature-pooling assumptions",
+        description="Persistent factor updates, local representation penalty, centering, semantic transform and fairness.",
+    ),
 }
 
 

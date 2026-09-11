@@ -1,5 +1,9 @@
 # Competitor fidelity va confirmation-only runbook
 
+Cap nhat 2026-09-11: da them Spectral post-hoc va AlignFed reference runner.
+Xem [audit implementation moi](paper_baseline_implementation_audit_vi.md).
+Bang duoi day mo ta confirmation v3 cu; code moi khong nang fidelity cua ket qua cu.
+
 Ngay: 2026-09-09. Matrix: `configs/rift_core_heldout_confirmation_matrix.json`
 (v3). Khong dung cac seed 6101-6106 de tune tham so sau khi da xem ket qua.
 

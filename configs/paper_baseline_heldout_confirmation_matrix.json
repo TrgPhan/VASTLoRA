@@ -1,0 +1,156 @@
+{
+  "name": "paper-baseline-heldout-confirmation-v1",
+  "phase": "confirmation",
+  "required_schema_version": 5,
+  "description": "Locked held-out cohort for the full Spectral Surgery post-hoc port and buffered AlignFed reference reimplementation.",
+  "runner": {
+    "script": "scripts/run_kaggle_3b.py",
+    "buffer_size": 1,
+    "schedule_mode": "async"
+  },
+  "experiment": {
+    "warmup_returns": 8,
+    "collected_returns": 32,
+    "server_update_weight": 1.0,
+    "calibration_sampling": "stratified",
+    "calibration_gradient_examples": 128,
+    "calibration_gradient_batch_size": 1,
+    "calibration_gate_examples": 48,
+    "monitor_examples": 48,
+    "eval_batch_size": 4,
+    "component_score_objective": "class_nll",
+    "calibration_gate_objective": "class_nll",
+    "monitor_objective": "class_nll",
+    "harm_epsilon": 0.000001,
+    "late_tau": 4,
+    "extreme_tau": 8,
+    "spectral_surgery": {
+      "policy": "smooth_abs",
+      "core_frac": 0.2,
+      "noise_frac": 0.2,
+      "min_core_k": 1,
+      "amp_factor": 1.25,
+      "sup_factor": 0.8,
+      "mid_factor": 1.0,
+      "smooth_temperature": 0.35,
+      "smooth_center_q": 0.5,
+      "preserve_energy": "l1"
+    },
+    "spectral_edit_target_modules": ["o_proj", "down_proj"],
+    "spectral_posthoc_base_method": "freshness"
+  },
+  "alignfed_reference": {
+    "max_pending": 4,
+    "max_wait": 5.0,
+    "representation_weight": 0.1,
+    "gamma": 0.2,
+    "steps": 3,
+    "learning_rate": 0.01,
+    "semantic_batch_size": 4
+  },
+  "tasks": [
+    {
+      "name": "sst2",
+      "task": "sst2",
+      "subset": "sst2",
+      "base_config": "configs/local_1_5b_rift_development.json",
+      "text_column": "sentence",
+      "label_column": "label",
+      "label_texts": [" negative", " positive"],
+      "validation_split": "validation",
+      "eval_split": "train",
+      "reserve_eval_from_train": true,
+      "eval_shuffle_seed": 271828,
+      "eval_offset": 5120,
+      "eval_examples": 1024,
+      "max_train_examples": 512,
+      "model_overrides": {
+        "max_length": 192,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+      }
+    },
+    {
+      "name": "qnli",
+      "task": "qnli",
+      "subset": "qnli",
+      "base_config": "configs/local_1_5b_rift_development.json",
+      "question_column": "question",
+      "sentence_column": "sentence",
+      "label_column": "label",
+      "label_texts": [" yes", " no"],
+      "validation_split": "validation",
+      "eval_shuffle_seed": 314159,
+      "eval_offset": 3072,
+      "eval_examples": 1024,
+      "max_train_examples": 512,
+      "model_overrides": {
+        "max_length": 192,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+      }
+    },
+    {
+      "name": "mnli_m",
+      "run_name": "mnli_m",
+      "task": "mnli",
+      "subset": "mnli",
+      "base_config": "configs/local_1_5b_rift_development.json",
+      "premise_column": "premise",
+      "hypothesis_column": "hypothesis",
+      "label_column": "label",
+      "label_texts": [" true", " unknown", " false"],
+      "prompt_style": "truth_value",
+      "validation_split": "validation_matched",
+      "eval_shuffle_seed": 314159,
+      "eval_offset": 3072,
+      "eval_examples": 1024,
+      "max_train_examples": 512,
+      "model_overrides": {
+        "max_length": 128,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+      }
+    },
+    {
+      "name": "mnli_mm",
+      "run_name": "mnli_mm",
+      "task": "mnli",
+      "subset": "mnli",
+      "base_config": "configs/local_1_5b_rift_development.json",
+      "premise_column": "premise",
+      "hypothesis_column": "hypothesis",
+      "label_column": "label",
+      "label_texts": [" true", " unknown", " false"],
+      "prompt_style": "truth_value",
+      "validation_split": "validation_mismatched",
+      "eval_shuffle_seed": 314159,
+      "eval_offset": 3072,
+      "eval_examples": 1024,
+      "max_train_examples": 512,
+      "model_overrides": {
+        "max_length": 128,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+      }
+    }
+  ],
+  "regimes": [
+    {
+      "name": "noniid_homogeneous_rank_high_staleness",
+      "partition_mode": "label_shard",
+      "client_ranks": [8, 8, 8, 8],
+      "compute_times": [1, 2, 5, 10]
+    }
+  ],
+  "methods": ["spectral_surgery_posthoc", "alignfed_reference"],
+  "seeds": [7301, 7302, 7303, 7304, 7305, 7306],
+  "gates": {
+    "minimum_paired_seeds": 6,
+    "minimum_client_return_coverage": 1,
+    "minimum_late_events": 8
+  },
+  "notes": [
+    "Every declared seed has equal weight and may not be removed after results are inspected.",
+    "The evaluation windows and seeds do not overlap the development audit or confirmation v3 windows.",
+    "Both methods use the same model, seven LoRA target modules, rank-8 clients, training data, return budget, calibration allocation and final evaluation set.",
+    "Spectral Surgery remains immediate asynchronous and performs one post-hoc adapter edit; AlignFed uses its required buffered factor-coordinate protocol. Safety rates therefore have different units and must not be directly pooled.",
+    "This cohort compares the two full ports with each other. It does not replace the heterogeneous-rank immediate-async confirmation v3 board."
+  ]
+}

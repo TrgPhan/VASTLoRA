@@ -23,6 +23,34 @@ class CompetitorSpec:
 
 
 COMPETITOR_SPECS: dict[str, CompetitorSpec] = {
+    "fedavg_lora": CompetitorSpec(
+        name="fedavg_lora",
+        fidelity="matched immediate-async FedAvg over LoRA factors",
+        description="Vanilla factor-space FedAvg control for federated LoRA.",
+    ),
+    "fedex_lora": CompetitorSpec(
+        name="fedex_lora",
+        fidelity="FedEx-LoRA residual mechanism adapted to one async arrival",
+        description="Exact mean-product correction folded into a frozen residual path.",
+    ),
+    "flora_lora": CompetitorSpec(
+        name="flora_lora",
+        fidelity="official FLoRA stacking equation adapted to one async arrival",
+        description=(
+            "Stacks weighted client/innovation LoRA products by concatenating "
+            "B horizontally and A vertically, then applies the shared rank cap."
+        ),
+    ),
+    "ffa_lora": CompetitorSpec(
+        name="ffa_lora",
+        fidelity="matched FFA-LoRA one-factor control",
+        description="Frozen A factor with factor aggregation of the trainable B factor.",
+    ),
+    "florg": CompetitorSpec(
+        name="florg",
+        fidelity="FLoRG single-matrix Gram/Procrustes mechanism adapted to async arrivals",
+        description="Single latent matrix, Gram aggregation and inter-round Procrustes alignment.",
+    ),
     "fedex": CompetitorSpec(
         name="fedex",
         fidelity="product-space async control; not full residual FedEx-LoRA",

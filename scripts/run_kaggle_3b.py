@@ -26,6 +26,17 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from riftlora.asyncfl import AsyncEventSimulator, ClientProfile
+from riftlora.baselines import (
+    FedExResidualController,
+    attach_florg_adapters,
+    capture_florg_state,
+    fedavg_aggregate_factor_state,
+    fedex_aggregate_factor_state,
+    flora_stack_aggregate_states,
+    florg_aggregate_state,
+    load_florg_state,
+    mask_florg_gradients,
+)
 from riftlora.data import iid_partition_indices, label_shard_partition_indices
 from riftlora.lowrank import CompactSVD
 from riftlora.scale import (
@@ -57,6 +68,11 @@ DEFAULT_LABEL_TEXTS = {
 }
 METHODS = (
     "raw",
+    "fedavg_lora",
+    "fedex_lora",
+    "flora_lora",
+    "florg",
+    "ffa_lora",
     "fedex",
     "freshness",
     "fedrot",
@@ -111,8 +127,9 @@ def main() -> None:
         print(json.dumps(_dry_run_summary(config, args), indent=2))
         return
 
-    result = run_experiment(config, method=args.method, seed=args.seed)
     variant = args.variant or args.method
+    result = run_experiment(config, method=args.method, seed=args.seed,
+                            artifact_dir=Path(config["output_dir"]) / f"{variant}_seed{args.seed}")
     result["variant"] = variant
     output_dir = Path(config["output_dir"]) / f"{variant}_seed{args.seed}"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -129,7 +146,8 @@ def main() -> None:
     print(json.dumps(result["metrics"], indent=2, sort_keys=True, allow_nan=False))
 
 
-def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[str, Any]:
+def run_experiment(config: dict[str, Any], *, method: str, seed: int,
+                   artifact_dir: Path | None = None) -> dict[str, Any]:
     from datasets import load_dataset
 
     _seed_everything(seed)
@@ -187,6 +205,11 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         split_name="training",
     )
     experiment = config["experiment"]
+    milestones = experiment.get("generation_eval_returns", [])
+    work_tracker = None
+    if dataset_config.get("task") == "generation":
+        from riftlora.scale.generation_study import ClientWork
+        work_tracker = ClientWork()
     calibration_gradient_examples = int(experiment.get("calibration_gradient_examples", 0))
     calibration_gate_examples = int(experiment.get("calibration_gate_examples", 0))
     monitor_examples = int(experiment.get("monitor_examples", 0))
@@ -242,7 +265,26 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         schedule_mode=str(experiment.get("schedule_mode", "async")),
     ).run(max_returns=total_returns)
 
+    if method == "florg":
+        return _run_florg_experiment(
+            config,
+            seed=seed,
+            train=train,
+            validation=validation,
+            calibration_gradient=calibration_gradient,
+            calibration_gate=calibration_gate,
+            monitor=monitor,
+            partitions=partitions,
+            trace=trace,
+            generation_audit=generation_audit,
+            partition_diagnostics=partition_diagnostics,
+            work_tracker=work_tracker,
+        )
+
     tokenizer, model = _load_model(config)
+    if method == "ffa_lora":
+        _freeze_lora_a(model)
+    fedex_controller = FedExResidualController(model) if method == "fedex_lora" else None
     component_score_objective = str(
         experiment.get("component_score_objective", "label_nll")
     )
@@ -288,6 +330,9 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
             )
     server_state = _state_to_cpu(empty_adapter_state(model))
     snapshots: dict[int, dict[str, CompactSVD]] = {0: server_state}
+    residual_snapshots: dict[int, dict[str, torch.Tensor]] = {}
+    if fedex_controller is not None:
+        residual_snapshots[0] = fedex_controller.zero_state()
     histories = {
         name: deque(maxlen=experiment["history_size"]) for name in server_state
     }
@@ -322,11 +367,18 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
     monitor_cache_hits = 0
     harm_epsilon = float(experiment.get("harm_epsilon", 1e-6))
     rng = random.Random(seed)
+    curve = []
+    final_at_milestone = None
+    milestone_seconds = 0.0
+    study_commit = _git_commit() if milestones else None
+    study_dirty = _git_worktree_dirty() if milestones else None
 
     for event_index, event in enumerate(trace.records):
         client_id = int(event.client_id)
         active_rank = event.rank
         stale_state = snapshots[event.base_version]
+        if fedex_controller is not None:
+            fedex_controller.set_state(residual_snapshots[event.base_version])
         load_compact_adapter_state(
             model,
             stale_state,
@@ -350,6 +402,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
             learning_rate=experiment["local_learning_rate"],
             weight_decay=experiment["weight_decay"],
             gradient_clip_norm=experiment["gradient_clip_norm"],
+            work_tracker=work_tracker,
         )
         after = capture_factor_snapshot(model)
         innovations = compact_factor_innovations(
@@ -379,7 +432,76 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         relative_predicted_gains: list[float] = []
         gate_mean_deltas: list[float] = []
         accepted_routes: list[str] = []
-        if accepted_method == "fedrot":
+        fedex_next_residual = (
+            {name: value.clone() for name, value in residual_snapshots[event.arrival_version].items()}
+            if fedex_controller is not None
+            else None
+        )
+        if accepted_method in {"fedavg_lora", "ffa_lora"}:
+            next_state = fedavg_aggregate_factor_state(
+                current_state,
+                after,
+                active_rank=active_rank,
+                weight=experiment["server_update_weight"],
+                max_rank=experiment["server_max_rank"],
+                rank_rtol=experiment["rank_rtol"],
+            )
+            freshness = math.exp(-transport_config.freshness_lambda * event.staleness)
+            rhos.append(1.0)
+            freshness_values.append(freshness)
+            residual_scales.append(1.0)
+            accepted_scales.append(1.0)
+            accepted_routes.append("ffa_frozen_a" if accepted_method == "ffa_lora" else "fedavg_factor_space")
+            for name in next_state:
+                histories[name].append(next_state[name])
+        elif accepted_method == "fedex_lora":
+            if fedex_controller is None:
+                raise RuntimeError("FedEx residual controller was not initialized")
+            next_state, fedex_next_residual = fedex_aggregate_factor_state(
+                current_state,
+                after,
+                current_residual=residual_snapshots[event.arrival_version],
+                stale_residual=residual_snapshots[event.base_version],
+                active_rank=active_rank,
+                weight=experiment["server_update_weight"],
+                max_rank=experiment["server_max_rank"],
+                rank_rtol=experiment["rank_rtol"],
+            )
+            freshness = math.exp(-transport_config.freshness_lambda * event.staleness)
+            rhos.append(1.0)
+            freshness_values.append(freshness)
+            residual_scales.append(1.0)
+            accepted_scales.append(1.0)
+            accepted_routes.append("fedex_exact_residual")
+            for name in next_state:
+                histories[name].append(next_state[name])
+        elif accepted_method == "flora_lora":
+            # Official FLoRA stacks participating client products.  This
+            # immediate-arrival runner uses the exact client innovation as
+            # the arriving block, then recompresses only at the server rank
+            # budget; it never averages A/B factors.
+            next_state = flora_stack_aggregate_states(
+                current_state,
+                innovations,
+                weight=experiment["server_update_weight"],
+                max_rank=experiment["server_max_rank"],
+                rank_rtol=experiment["rank_rtol"],
+            )
+            freshness = math.exp(-transport_config.freshness_lambda * event.staleness)
+            rhos.append(1.0)
+            freshness_values.append(freshness)
+            residual_scales.append(1.0)
+            accepted_scales.append(1.0)
+            accepted_routes.append("flora_stack_exact_then_recompress")
+            core_diagnostics["flora_stacked_rank_before_cap"] = float(
+                sum(current_state[name].rank + innovations[name].rank for name in current_state)
+            )
+            core_diagnostics["flora_rank_after_cap"] = float(
+                sum(next_state[name].rank for name in next_state)
+            )
+            for name in next_state:
+                histories[name].append(next_state[name])
+        elif accepted_method == "fedrot":
             fedrot_schedule = str(
                 experiment.get("fedrot_align_schedule", "fixed_b")
             )
@@ -754,6 +876,8 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
             if math.isfinite(current_monitor_loss):
                 monitor_cache_hits += 1
             if not math.isfinite(current_monitor_loss):
+                if fedex_controller is not None:
+                    fedex_controller.set_state(residual_snapshots[event.arrival_version])
                 load_compact_adapter_state(
                     model,
                     current_state,
@@ -775,6 +899,8 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                 active_rank=experiment["server_max_rank"],
                 initialize_free_directions=False,
             )
+            if fedex_controller is not None:
+                fedex_controller.set_state(fedex_next_residual)
             accepted_monitor_loss = _mean_classification_loss(
                 model,
                 tokenizer,
@@ -789,6 +915,11 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         update_accepted = int(any(scale > 0.0 for scale in accepted_scales))
         server_state = _state_to_cpu(next_state)
         snapshots[event.new_server_version] = server_state
+        if fedex_controller is not None:
+            residual_snapshots[event.new_server_version] = {
+                name: value.detach().cpu().clone()
+                for name, value in fedex_next_residual.items()
+            }
         event_rows.append(
             {
                 "event": event_index,
@@ -849,12 +980,40 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
             }
         )
 
+        measured_returns = event_index + 1 - experiment["warmup_returns"]
+        if measured_returns in milestones:
+            from riftlora.scale.generation_study import evaluate_server, write_milestone
+            checkpoint_start = time.perf_counter()
+            checkpoint_metrics, checkpoint_details = evaluate_server(
+                model, server_state, rank=experiment["server_max_rank"],
+                evaluate=lambda: evaluate_task(
+                    model, tokenizer, validation, dataset_config=dataset_config,
+                    max_length=config["model"]["max_length"], batch_size=experiment["eval_batch_size"]),
+            )
+            record = write_milestone(
+                artifact_dir or Path(config["output_dir"]) / f"{method}_seed{seed}",
+                config=config, method=method, seed=seed, measured_returns=measured_returns,
+                total_returns=event_index + 1, server_version=event.new_server_version,
+                server_state=server_state, metrics=checkpoint_metrics, details=checkpoint_details,
+                work=work_tracker.snapshot(), elapsed_seconds=time.perf_counter() - start_time,
+                git_commit=study_commit, git_worktree_dirty=study_dirty,
+                config_fingerprint=_config_fingerprint(config), events=event_rows,
+            )
+            curve.append(record)
+            milestone_seconds += time.perf_counter() - checkpoint_start
+            print(f"Milestone {measured_returns}: NLL={checkpoint_metrics['nll']:.6f}, "
+                  f"ROUGE-L={checkpoint_metrics['rouge_l']:.6f}", flush=True)
+            if measured_returns == experiment["collected_returns"]:
+                final_at_milestone = (checkpoint_metrics, checkpoint_details)
+
     load_compact_adapter_state(
         model,
         server_state,
         active_rank=experiment["server_max_rank"],
         initialize_free_directions=False,
     )
+    if fedex_controller is not None:
+        fedex_controller.set_state(residual_snapshots[len(event_rows)])
     posthoc_diagnostics = None
     if method == "spectral_surgery_posthoc":
         pre_edit, _ = evaluate_classification(
@@ -884,7 +1043,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
             "harmful_metrics_scope": "training_returns_before_posthoc_edit",
             "selection": "fixed_policy_no_evaluation_selection",
         }
-    final, final_details = evaluate_task(
+    final, final_details = final_at_milestone or evaluate_task(
         model,
         tokenizer,
         validation,
@@ -1105,8 +1264,12 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
     if generation_audit is not None:
         for prefix, values in (("baseline", baseline), ("final", final)):
             for key in ("token_nll", "perplexity", "mean_example_nll", "rouge_l", "exact_match",
-                        "generation_limit_rate", "response_tokens"):
+                        "generation_limit_rate", "response_tokens", "rouge_l_precision",
+                        "rouge_l_recall", "mean_generated_tokens"):
                 metrics[f"{prefix}_{key}"] = values[key]
+        metrics.update(work_tracker.snapshot())
+        if milestones:
+            metrics["milestone_evaluation_seconds"] = milestone_seconds
         generation_audit["selected_source_ids"] = {
             name: list(data["source_id"]) if data is not None else []
             for name, data in (("clients", train), ("gradient", calibration_gradient),
@@ -1118,7 +1281,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
                 for name, data in (("clients", train), ("gradient", calibration_gradient),
                                    ("gate", calibration_gate), ("monitor", monitor), ("evaluation", validation))
             }
-    return {
+    result = {
         "schema_version": 5,
         "method": method,
         "seed": seed,
@@ -1149,6 +1312,242 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int) -> dict[st
         "baseline_eval_details": baseline_details,
         "final_eval_details": final_details,
     }
+    if milestones:
+        result["development_learning_curve"] = curve
+    return result
+
+
+def _run_florg_experiment(
+    config: dict[str, Any],
+    *,
+    seed: int,
+    train,
+    validation,
+    calibration_gradient,
+    calibration_gate,
+    monitor,
+    partitions,
+    trace,
+    generation_audit,
+    partition_diagnostics,
+    work_tracker,
+) -> dict[str, Any]:
+    """Run the actual single-matrix FLoRG backend on the shared event trace."""
+    experiment = config["experiment"]
+    dataset_config = config["dataset"]
+    tokenizer, model = _load_florg_model(config)
+    server_state = capture_florg_state(model)
+    snapshots: dict[int, dict[str, torch.Tensor]] = {0: server_state}
+    baseline, baseline_details = evaluate_task(
+        model,
+        tokenizer,
+        validation,
+        dataset_config=dataset_config,
+        max_length=config["model"]["max_length"],
+        batch_size=experiment["eval_batch_size"],
+    )
+    monitor_loss_by_version: dict[int, float] = {}
+    event_rows: list[dict[str, Any]] = []
+    rng = random.Random(seed)
+    harm_epsilon = float(experiment.get("harm_epsilon", 1e-6))
+    start_time = time.perf_counter()
+
+    for event_index, event in enumerate(trace.records):
+        active_rank = int(event.rank)
+        stale_state = snapshots[event.base_version]
+        load_florg_state(model, stale_state)
+        local_loss = _train_client(
+            model,
+            tokenizer,
+            train,
+            partitions[int(event.client_id)],
+            rng=rng,
+            active_rank=active_rank,
+            dataset_config=dataset_config,
+            max_length=config["model"]["max_length"],
+            local_steps=experiment["local_steps"],
+            gradient_accumulation_steps=experiment["gradient_accumulation_steps"],
+            batch_size=experiment["local_batch_size"],
+            learning_rate=experiment["local_learning_rate"],
+            weight_decay=experiment["weight_decay"],
+            gradient_clip_norm=experiment["gradient_clip_norm"],
+            work_tracker=work_tracker,
+            adapter_kind="florg",
+        )
+        client_after = capture_florg_state(model)
+        current_state = snapshots[event.arrival_version]
+        next_state = florg_aggregate_state(
+            current_state,
+            client_after,
+            weight=float(experiment["server_update_weight"]),
+        )
+
+        load_florg_state(model, current_state)
+        current_loss = monitor_loss_by_version.get(event.arrival_version, float("nan"))
+        if not math.isfinite(current_loss):
+            current_loss = _mean_classification_loss(
+                model,
+                tokenizer,
+                monitor,
+                dataset_config=dataset_config,
+                max_length=config["model"]["max_length"],
+                batch_size=experiment["eval_batch_size"],
+                objective=str(experiment.get("monitor_objective", "label_nll")),
+            )
+        load_florg_state(model, next_state)
+        accepted_loss = _mean_classification_loss(
+            model,
+            tokenizer,
+            monitor,
+            dataset_config=dataset_config,
+            max_length=config["model"]["max_length"],
+            batch_size=experiment["eval_batch_size"],
+            objective=str(experiment.get("monitor_objective", "label_nll")),
+        )
+        monitor_loss_by_version[event.new_server_version] = accepted_loss
+        measured = event_index >= int(experiment["warmup_returns"])
+        harmful = accepted_loss > current_loss + harm_epsilon
+        late = int(event.staleness) >= int(experiment.get("late_tau", 8))
+        server_state = {name: value.detach().cpu().clone() for name, value in next_state.items()}
+        snapshots[event.new_server_version] = server_state
+        event_rows.append({
+            "event": event_index,
+            "client_id": int(event.client_id),
+            "client_rank": active_rank,
+            "base_version": event.base_version,
+            "arrival_version": event.arrival_version,
+            "staleness": event.staleness,
+            "group_id": event.group_id,
+            "group_version": event.group_version,
+            "group_position": event.group_position,
+            "buffer_size": event.buffer_size,
+            "group_closed": event.group_closed,
+            "method": "florg",
+            "measured": measured,
+            "local_loss": local_loss,
+            "current_loss": current_loss,
+            "accepted_loss": accepted_loss,
+            "update_accepted": 1,
+            "harmful_update": harmful,
+            "late_harmful_update": bool(late and harmful),
+            "extreme_harmful_update": bool(
+                int(event.staleness) >= int(experiment.get("extreme_tau", 16)) and harmful
+            ),
+            "freshness": math.exp(-float(experiment["freshness_lambda"]) * int(event.staleness)),
+            "rho": 1.0,
+            "residual_scale": 1.0,
+            "accepted_scale": 1.0,
+            "retained_rank": active_rank,
+            "total_rank": active_rank,
+            "retained_fraction": 1.0,
+            "predicted_gain": float("nan"),
+            "relative_predicted_gain": float("nan"),
+            "gate_mean_delta": float("nan"),
+            "route": "florg_gram_procrustes",
+            "mean_left_rank": active_rank,
+            "mean_right_rank": active_rank,
+        })
+
+    load_florg_state(model, server_state)
+    final, final_details = evaluate_task(
+        model,
+        tokenizer,
+        validation,
+        dataset_config=dataset_config,
+        max_length=config["model"]["max_length"],
+        batch_size=experiment["eval_batch_size"],
+    )
+    measured_rows = [row for row in event_rows if row["measured"]]
+    late_rows = [row for row in measured_rows if row["staleness"] >= int(experiment.get("late_tau", 8))]
+    harm_values = [bool(row["harmful_update"]) for row in measured_rows]
+    late_harm_values = [bool(row["late_harmful_update"]) for row in late_rows]
+    deltas = [row["accepted_loss"] - row["current_loss"] for row in measured_rows]
+    late_deltas = [row["accepted_loss"] - row["current_loss"] for row in late_rows]
+    task_generation = generation_audit is not None
+    metrics: dict[str, Any] = {
+        "baseline_accuracy": baseline["accuracy"],
+        "final_accuracy": final["accuracy"],
+        "baseline_balanced_accuracy": baseline["balanced_accuracy"],
+        "final_balanced_accuracy": final["balanced_accuracy"],
+        "baseline_nll": baseline["nll"],
+        "final_nll": final["nll"],
+        "baseline_binary_nll": baseline["binary_nll"],
+        "final_binary_nll": final["binary_nll"],
+        "baseline_class_nll": baseline["class_nll"],
+        "final_class_nll": final["class_nll"],
+        "baseline_label_nll": baseline["label_nll"],
+        "final_label_nll": final["label_nll"],
+        "baseline_eos_nll": baseline["eos_nll"],
+        "final_eos_nll": final["eos_nll"],
+        "accuracy_change_pp": None if final["accuracy"] is None else 100 * (final["accuracy"] - baseline["accuracy"]),
+        "nll_change": final["nll"] - baseline["nll"],
+        "mean_local_loss": _mean([row["local_loss"] for row in event_rows]),
+        "mean_staleness": _mean([row["staleness"] for row in measured_rows]),
+        "max_staleness": max([row["staleness"] for row in measured_rows], default=0),
+        "harmful_update_rate": _mean(harm_values),
+        "late_harmful_update_rate": _mean(late_harm_values),
+        "extreme_harmful_update_rate": _mean([row["extreme_harmful_update"] for row in measured_rows]),
+        "acceptance_rate": 1.0,
+        "client_return_coverage": 1.0,
+        "min_client_returns": min((sum(row["client_id"] == client for row in measured_rows)
+                                    for client in range(int(experiment["num_clients"]))), default=0),
+        "measured_event_count": len(measured_rows),
+        "late_event_count": len(late_rows),
+        "worst_step_loss_increase": max([0.0, *deltas]),
+        "worst_late_step_loss_increase": max([0.0, *late_deltas]),
+        "monitor_loss_change": _mean(deltas),
+        "utility_per_accepted_update": _mean([-delta for delta in deltas]),
+        "utility_per_returned_update": _mean([-delta for delta in deltas]),
+        "cumulative_monitor_utility": sum(-delta for delta in deltas),
+        "runtime_seconds": time.perf_counter() - start_time,
+        "peak_cuda_memory_gib": torch.cuda.max_memory_allocated() / (1024 ** 3) if torch.cuda.is_available() else 0.0,
+        "monitor_cache_hits": 0,
+        "mean_rho_after_warmup": 1.0,
+        "mean_adaptive_left_rank": float(experiment["server_max_rank"]),
+        "mean_adaptive_right_rank": float(experiment["server_max_rank"]),
+        "monitor_objective": str(experiment.get("monitor_objective", "label_nll")),
+        "harm_epsilon": harm_epsilon,
+    }
+    if task_generation:
+        for prefix, values in (("baseline", baseline), ("final", final)):
+            for key in ("token_nll", "perplexity", "mean_example_nll", "rouge_l", "exact_match",
+                        "generation_limit_rate", "response_tokens", "rouge_l_precision",
+                        "rouge_l_recall", "mean_generated_tokens"):
+                metrics[f"{prefix}_{key}"] = values[key]
+        metrics.update(work_tracker.snapshot())
+        generation_audit["selected_source_ids"] = {
+            name: list(data["source_id"]) if data is not None else []
+            for name, data in (("clients", train), ("gradient", calibration_gradient), ("gate", calibration_gate),
+                               ("monitor", monitor), ("evaluation", validation))
+        }
+        if config["dataset"].get("reserve_context_groups", False):
+            generation_audit["selected_group_ids"] = {
+                name: list(data["group_id"]) if data is not None else []
+                for name, data in (("clients", train), ("gradient", calibration_gradient), ("gate", calibration_gate),
+                                   ("monitor", monitor), ("evaluation", validation))
+            }
+    result = {
+        "schema_version": 5,
+        "method": "florg",
+        "seed": seed,
+        "model": config["model"]["name"],
+        "task": dataset_config.get("run_name", dataset_config.get("task", dataset_config["hub_path"])),
+        "regime": experiment.get("regime_name", "default"),
+        "git_commit": _git_commit(),
+        "git_worktree_dirty": _git_worktree_dirty(),
+        "config_fingerprint": _config_fingerprint(config),
+        "provenance": dict(config.get("provenance", {})),
+        "config": config,
+        "data_diagnostics": {
+            "generation": generation_audit,
+            "federated_client_partitions": partition_diagnostics,
+        },
+        "metrics": metrics,
+        "events": event_rows,
+        "baseline_eval_details": baseline_details,
+        "final_eval_details": final_details,
+    }
+    return result
 
 
 def _load_model(config: Mapping[str, Any]):
@@ -1184,7 +1583,10 @@ def _load_model(config: Mapping[str, Any]):
         **kwargs,
     )
     if model_config["load_in_4bit"]:
-        model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+        model = prepare_model_for_kbit_training(
+            model,
+            use_gradient_checkpointing=bool(model_config.get("gradient_checkpointing", True)),
+        )
     elif torch.cuda.is_available():
         model = model.to("cuda")
 
@@ -1201,6 +1603,69 @@ def _load_model(config: Mapping[str, Any]):
         ),
     )
     model.config.use_cache = False
+    return tokenizer, model
+
+
+def _freeze_lora_a(model) -> None:
+    """Freeze LoRA A for the FFA-LoRA one-factor exact baseline."""
+    found = 0
+    for module in model.modules():
+        lora_a = getattr(module, "lora_A", None)
+        if lora_a is None:
+            continue
+        for adapter in lora_a.values():
+            for parameter in adapter.parameters():
+                parameter.requires_grad_(False)
+                found += 1
+    if not found:
+        raise ValueError("FFA-LoRA could not find LoRA A parameters")
+
+
+def _load_florg_model(config: Mapping[str, Any]):
+    """Load a base model and attach the single-matrix FLoRG adapters."""
+    from peft import prepare_model_for_kbit_training
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+
+    model_config = config["model"]
+    experiment = config["experiment"]
+    revision = model_config.get("revision")
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_config["name"], use_fast=True, revision=revision
+    )
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "right"
+    kwargs: dict[str, Any] = {"torch_dtype": torch.float16}
+    if model_config["load_in_4bit"]:
+        if not torch.cuda.is_available():
+            raise RuntimeError("FLoRG 4-bit runs require CUDA")
+        kwargs["device_map"] = {"": 0}
+        kwargs["quantization_config"] = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_use_double_quant=True,
+        )
+    model = AutoModelForCausalLM.from_pretrained(
+        model_config["name"], revision=revision, **kwargs
+    )
+    if model_config["load_in_4bit"]:
+        model = prepare_model_for_kbit_training(
+            model,
+            use_gradient_checkpointing=bool(model_config.get("gradient_checkpointing", True)),
+        )
+    elif torch.cuda.is_available():
+        model = model.to("cuda")
+        for parameter in model.parameters():
+            parameter.requires_grad_(False)
+    model.config.use_cache = False
+    attach_florg_adapters(
+        model,
+        target_modules=model_config["target_modules"],
+        rank=int(experiment["server_max_rank"]),
+        alpha=float(experiment.get("florg_alpha", experiment["server_max_rank"])),
+        seed=int(experiment.get("florg_seed", 0)),
+    )
     return tokenizer, model
 
 
@@ -1254,6 +1719,8 @@ def _train_client(
     learning_rate: float,
     weight_decay: float,
     gradient_clip_norm: float,
+    work_tracker=None,
+    adapter_kind: str = "lora",
 ) -> float:
     parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
     optimizer = torch.optim.AdamW(parameters, lr=learning_rate, weight_decay=weight_decay)
@@ -1272,6 +1739,8 @@ def _train_client(
                 max_length=max_length,
             )
             batch = _move_batch(batch, _model_input_device(model))
+            if work_tracker is not None:
+                work_tracker.record(examples, batch)
             shifted_logits, shifted_labels = _supervised_suffix_logits(model, batch)
             token_loss = F.cross_entropy(
                 shifted_logits.transpose(1, 2),
@@ -1291,7 +1760,12 @@ def _train_client(
                 raise RuntimeError(f"non-finite local loss: {float(loss)}")
             loss.backward()
             losses.append(float(loss.detach()) * gradient_accumulation_steps)
-        mask_inactive_rank_gradients(model, active_rank=active_rank)
+        if adapter_kind == "lora":
+            mask_inactive_rank_gradients(model, active_rank=active_rank)
+        elif adapter_kind == "florg":
+            mask_florg_gradients(model, active_rank=active_rank)
+        else:
+            raise ValueError(f"unknown adapter_kind={adapter_kind!r}")
         torch.nn.utils.clip_grad_norm_(parameters, gradient_clip_norm)
         optimizer.step()
     optimizer.zero_grad(set_to_none=True)
@@ -2475,7 +2949,7 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
             raise ValueError(f"3B runner requires dataset.{field}")
     task = str(dataset.get("task", dataset.get("subset", ""))).lower()
     if task == "generation":
-        if method not in {"raw", "freshness", "alignfed_calibration", "spectral_surgery", "rift", "rift_diag", "rift_core"}:
+        if method not in {"raw", "freshness", "fedavg_lora", "fedex_lora", "flora_lora", "florg", "ffa_lora", "fedrot", "alignfed_calibration", "spectral_surgery", "rift", "rift_diag", "rift_core"}:
             raise ValueError("method is not validated for the Week 9 generative protocol")
         for key in ("component_score_objective", "calibration_gate_objective", "monitor_objective"):
             if experiment.get(key) != "label_nll":
@@ -2484,11 +2958,25 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
                 or dataset.get("max_response_tokens", 0) < 2
                 or dataset["max_prompt_tokens"] + dataset["max_response_tokens"] > model["max_length"]):
             raise ValueError("invalid generation category/token budgets")
-        if dataset.get("prompt_format", "plain_v1") not in {"plain_v1", "chat_v1"}:
+        if dataset.get("prompt_format", "plain_v1") not in {"plain_v1", "chat_v1", "chat_concise_v1"}:
             raise ValueError("invalid generation prompt_format")
+        eligible = dataset.get("eligibility_prompt_formats", [])
+        if (not isinstance(eligible, list) or any(p not in {"plain_v1", "chat_v1", "chat_concise_v1"} for p in eligible)
+                or (eligible and dataset.get("prompt_format") not in eligible)):
+            raise ValueError("invalid shared prompt eligibility formats")
         generation_budget = dataset.get("max_new_tokens", dataset["max_response_tokens"])
         if not isinstance(generation_budget, int) or isinstance(generation_budget, bool) or generation_budget < 1:
             raise ValueError("generation max_new_tokens must be a positive integer")
+    milestones = experiment.get("generation_eval_returns", [])
+    if not isinstance(milestones, list):
+        raise ValueError("generation_eval_returns must be a list")
+    if milestones:
+        if (task != "generation" or config.get("provenance", {}).get("phase") not in {"development", "smoke"}
+                or dataset.get("eval_split") != "validation" or experiment.get("buffer_size", 1) != 1):
+            raise ValueError("generation learning curves require immediate development validation only")
+        if (not isinstance(milestones, list) or any(type(n) is not int or n < 1 for n in milestones)
+                or milestones != sorted(set(milestones)) or milestones[-1] != experiment["collected_returns"]):
+            raise ValueError("milestones must be increasing positive returns ending at collected_returns")
     if task == "sst2" and "text_column" not in dataset:
         raise ValueError("SST-2 config requires text_column")
     if task == "qnli":

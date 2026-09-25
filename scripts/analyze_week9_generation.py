@@ -20,6 +20,7 @@ RUN_COLUMNS = (
     "regime", "method", "seed", "token_nll", "perplexity", "rouge_l", "exact_match",
     "backbone_nll_change", "harmful", "late_harmful", "late_events", "acceptance",
     "runtime_seconds", "peak_vram_gib", "generation_limit_rate", "git_commit",
+    "rouge_l_precision", "rouge_l_recall", "mean_generated_tokens",
 )
 
 
@@ -63,6 +64,9 @@ def analyze(root, target="rift_core"):
             rows.append({"regime": exp["regime_name"], "method": method, "seed": seed,
                          "token_nll": m["final_token_nll"], "perplexity": m["final_perplexity"],
                          "rouge_l": m["final_rouge_l"], "exact_match": m["final_exact_match"],
+                         "rouge_l_precision": m.get("final_rouge_l_precision"),
+                         "rouge_l_recall": m.get("final_rouge_l_recall"),
+                         "mean_generated_tokens": m.get("final_mean_generated_tokens"),
                          "backbone_nll_change": m["final_token_nll"] - m["baseline_token_nll"],
                          "harmful": m["harmful_update_rate"],
                          "late_harmful": m["late_harmful_update_rate"] if m["late_event_count"] else None,
@@ -132,6 +136,8 @@ def main():
         summary = frame.groupby(["regime", "method"]).agg(
             seeds=("seed", "count"), token_nll=("token_nll", "mean"), nll_sd=("token_nll", "std"),
             perplexity=("perplexity", "mean"), rouge_l=("rouge_l", "mean"),
+            rouge_l_precision=("rouge_l_precision", "mean"), rouge_l_recall=("rouge_l_recall", "mean"),
+            mean_generated_tokens=("mean_generated_tokens", "mean"),
             harmful=("harmful", "mean"), late_harmful=("late_harmful", "mean"),
             minimum_late_events=("late_events", "min"), acceptance=("acceptance", "mean"),
             runtime_seconds=("runtime_seconds", "mean"), peak_vram_gib=("peak_vram_gib", "max"),

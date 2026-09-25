@@ -89,7 +89,7 @@ def test_group_split_dedup_and_length_filter_are_seed_independent():
     assert audit == generation.prepare_records(rows, Tokenizer(), ds, 16)[1]
 
 
-@pytest.mark.parametrize("method", ["raw", "freshness", "alignfed_calibration", "spectral_surgery", "rift", "rift_diag", "rift_core"])
+@pytest.mark.parametrize("method", ["raw", "freshness", "fedavg_lora", "fedex_lora", "flora_lora", "ffa_lora", "alignfed_calibration", "spectral_surgery", "rift", "rift_diag", "rift_core"])
 def test_generation_runs_shared_methods_with_real_peft(monkeypatch, tiny_model, method, tmp_path):
     from datasets import Dataset, DatasetDict
     data = DatasetDict(train=Dataset.from_list([row(i) for i in range(40)]),
@@ -138,6 +138,45 @@ def test_generation_runs_shared_methods_with_real_peft(monkeypatch, tiny_model, 
     path.write_text(json.dumps(result, allow_nan=False), encoding="utf-8")
     validate_run(path, config=c, method=method, seed=9001, matrix=load_matrix(smoke=True))
     json.dumps(result, allow_nan=False)
+
+
+def test_generation_runs_real_florg_backend(monkeypatch, tiny_model, tmp_path):
+    from datasets import Dataset, DatasetDict
+    from transformers import Qwen2Config, Qwen2ForCausalLM
+    from riftlora.baselines import attach_florg_adapters
+
+    data = DatasetDict(
+        train=Dataset.from_list([row(i) for i in range(40)]),
+        validation=Dataset.from_list([row(i) for i in range(100, 104)]),
+    )
+    monkeypatch.setattr(generation, "load_instruction_data", lambda _: (data, {}))
+
+    def load_florg(config):
+        model = Qwen2ForCausalLM(Qwen2Config(
+            vocab_size=16, hidden_size=16, intermediate_size=32,
+            num_hidden_layers=3, num_attention_heads=2, num_key_value_heads=1,
+            max_position_embeddings=64, use_cache=False,
+        ))
+        for parameter in model.parameters():
+            parameter.requires_grad_(False)
+        attach_florg_adapters(model, target_modules=["q_proj", "v_proj"], rank=2, seed=4)
+        return Tokenizer(), model
+
+    monkeypatch.setattr(shared, "_load_florg_model", load_florg)
+    c = config()
+    shared._validate_config(c, "florg")
+    result = shared.run_experiment(c, method="florg", seed=9001)
+    assert result["method"] == "florg"
+    assert len(result["events"]) == 6
+    assert result["metrics"]["final_token_nll"] > 0
+    assert len(result["final_eval_details"]) == 4
+    import pandas as pd
+    from week9_artifacts import validate_run
+    for key in ("events", "baseline_eval_details", "final_eval_details"):
+        pd.DataFrame(result.pop(key)).to_csv(tmp_path / f"{key}.csv", index=False)
+    path = tmp_path / "result.json"
+    path.write_text(json.dumps(result, allow_nan=False), encoding="utf-8")
+    validate_run(path, config=c, method="florg", seed=9001, matrix=load_matrix(smoke=True))
 
 
 @pytest.mark.parametrize("phase", ["development", "confirmation"])
@@ -229,4 +268,88 @@ def test_invalid_generation_budget(budget):
     c = config()
     c["dataset"]["max_new_tokens"] = budget
     with pytest.raises(ValueError, match="positive integer"):
+        shared._validate_config(c, "raw")
+
+
+@pytest.mark.parametrize("method", ["raw", "spectral_surgery", "alignfed_calibration", "rift_core"])
+def test_learning_curve_does_not_change_training_and_saves_valid_checkpoints(monkeypatch, tiny_model, method, tmp_path):
+    import copy
+    import random
+    import numpy as np
+    import pandas as pd
+    from datasets import Dataset, DatasetDict
+    from week9_artifacts import validate_milestone
+    data = DatasetDict(train=Dataset.from_list([row(i) for i in range(40)]),
+                       validation=Dataset.from_list([row(i) for i in range(100, 104)]))
+    monkeypatch.setattr(generation, "load_instruction_data", lambda _: (data, {}))
+    untouched = copy.deepcopy(tiny_model)
+    monkeypatch.setattr(shared, "_load_model", lambda _: (Tokenizer(), copy.deepcopy(untouched)))
+    original_eval = shared.evaluate_task
+    def noisy_eval(*args, **kwargs):
+        result = original_eval(*args, **kwargs)
+        random.random()
+        np.random.random()
+        torch.rand(3)
+        return result
+    monkeypatch.setattr(shared, "evaluate_task", noisy_eval)
+    c = config()
+    baseline = shared.run_experiment(copy.deepcopy(c), method=method, seed=9001)
+    c["experiment"]["generation_eval_returns"] = [2, 5]
+    artifact = tmp_path / method
+    with_curve = shared.run_experiment(c, method=method, seed=9001, artifact_dir=artifact)
+    pd.testing.assert_frame_equal(pd.DataFrame(baseline["events"]), pd.DataFrame(with_curve["events"]), check_exact=True)
+    assert baseline["final_eval_details"] == with_curve["final_eval_details"]
+    assert with_curve["metrics"]["client_sample_presentations"] == 6
+    assert with_curve["metrics"]["client_response_tokens"] == 12
+    assert [r["measured_returns"] for r in with_curve["development_learning_curve"]] == [2, 5]
+    for budget in (2, 5):
+        directory = artifact / "milestones" / f"returns_{budget:04d}"
+        entry, _ = validate_milestone(directory, config=c, method=method, seed=9001)
+        assert entry["total_returns"] == budget + 1
+        state = torch.load(directory / "adapter.pt", weights_only=True)
+        assert state["kind"] == "evaluation_adapter_only" and state["adapter"]
+    # An independent shorter run must match the first checkpoint of the long trajectory.
+    shorter = copy.deepcopy(c)
+    shorter["experiment"].update(collected_returns=2, generation_eval_returns=[])
+    short_result = shared.run_experiment(shorter, method=method, seed=9001)
+    assert short_result["metrics"]["final_nll"] == with_curve["development_learning_curve"][0]["metrics"]["nll"]
+    import analyze_week9_learning_curve as curves
+    (tmp_path / "matrix.json").write_text(json.dumps(load_matrix(smoke=True)))
+    monkeypatch.setattr(curves, "specs", lambda *_: [(method, 9001, c, artifact / "result.json")])
+    report = curves.analyze(tmp_path)
+    assert len(report["rows"]) == 2 and not report["missing"]
+    assert len(report["review_rows"]) == 8
+    assert "method" not in report["review_rows"][0]
+    if method == "raw":
+        monkeypatch.setattr(sys, "argv", ["analyze", "--input-dir", str(tmp_path)])
+        curves.main()
+        assert (tmp_path / "learning_curve_analysis/learning_curves.png").exists()
+        review_path = tmp_path / "learning_curve_analysis/correctness_template.csv"
+        review = pd.read_csv(review_path, keep_default_na=False)
+        review.loc[0, "notes"] = "keep annotation"
+        review.to_csv(review_path, index=False)
+        curves.main()
+        assert pd.read_csv(review_path, keep_default_na=False).loc[0, "notes"] == "keep annotation"
+        import evaluate_week9_checkpoint as checkpoint_eval
+        monkeypatch.setattr(sys, "argv", ["eval", "--checkpoint-dir", str(artifact / "milestones/returns_0002"), "--dry-run"])
+        checkpoint_eval.main()
+    details_file = artifact / "milestones/returns_0002/eval_details.csv"
+    details_file.write_text("corrupt")
+    with pytest.raises(ValueError, match="hash mismatch"):
+        validate_milestone(details_file.parent, config=c, method=method, seed=9001)
+
+
+def test_learning_curve_cannot_read_confirmation_test():
+    c = config()
+    c["dataset"]["eval_split"] = "test"
+    c["experiment"]["generation_eval_returns"] = [5]
+    with pytest.raises(ValueError, match="development validation"):
+        shared._validate_config(c, "raw")
+
+
+@pytest.mark.parametrize("milestones", [[5, 2], [2, 2, 5], [True, 5], [2, 4], [0, 5]])
+def test_invalid_learning_curve_milestones(milestones):
+    c = config()
+    c["experiment"]["generation_eval_returns"] = milestones
+    with pytest.raises(ValueError, match="milestones"):
         shared._validate_config(c, "raw")

@@ -29,6 +29,22 @@ def test_matrix_budgets_and_plan_only_do_not_launch(monkeypatch, tmp_path):
     assert all(all(isinstance(arg, str) for arg in entry["command"]) for entry in plan)
 
 
+def test_budget_study_is_separate_and_has_matching_prompt_arms(tmp_path):
+    a = runner.load_matrix(study="budget")
+    b = runner.load_matrix(study="concise")
+    assert a["seeds"] == b["seeds"] == [9101, 9102]
+    assert a["experiment"]["generation_eval_returns"] == [64, 256, 512]
+    assert a["experiment"]["collected_returns"] == 512
+    assert len(list(runner.specs(a, tmp_path))) == len(list(runner.specs(b, tmp_path))) == 8
+    assert a["name"] != b["name"]
+    assert a["tasks"][0]["eligibility_prompt_formats"] == b["tasks"][0]["eligibility_prompt_formats"]
+    assert a["tasks"][0]["eval_split"] == b["tasks"][0]["eval_split"] == "validation"
+    assert runner.load_matrix()["experiment"]["collected_returns"] == 64
+    assert runner.load_matrix(study="budget", smoke=True)["experiment"]["generation_eval_returns"] == [2, 5]
+    with pytest.raises(ValueError, match="never confirmation"):
+        runner.load_matrix("confirmation", study="budget")
+
+
 class Process:
     pid = 123
     def __init__(self, code):
@@ -59,6 +75,27 @@ def test_worker_failure_stops_other_job_without_retry(monkeypatch, tmp_path):
     assert all(c["stdout"].closed for c in calls)
 
 
+def test_workers_per_gpu_creates_isolated_slots_without_changing_commands(monkeypatch, tmp_path):
+    matrix, specs = jobs(tmp_path)
+    processes = [Process(None), Process(1)]
+    calls = []
+
+    def popen(command, **kwargs):
+        calls.append((command, kwargs))
+        return processes[len(calls) - 1]
+
+    monkeypatch.setattr(runner.subprocess, "Popen", popen)
+    with pytest.raises(RuntimeError, match="worker failed"):
+        runner.execute_jobs(specs, matrix, tmp_path, gpus=[0], workers_per_gpu=2)
+    assert len(calls) == 2
+    assert [call[1]["env"]["CUDA_VISIBLE_DEVICES"] for call in calls] == ["0", "0"]
+    assert "--method" in calls[0][0] and "--method" in calls[1][0]
+    assert processes[0].terminated
+
+    with pytest.raises(ValueError, match="must be positive"):
+        runner.execute_jobs([], matrix, tmp_path / "invalid", gpus=[0], workers_per_gpu=0)
+
+
 def test_partial_run_never_overwritten_without_explicit_retry(monkeypatch, tmp_path):
     matrix, specs = jobs(tmp_path)
     directory = specs[0][3].parent
@@ -84,7 +121,8 @@ def test_matching_results_skip_and_max_jobs_only_limits_new_jobs(monkeypatch, tm
     monkeypatch.setattr(runner, "validate_run", lambda *a, **k: None)
     runner.execute_jobs(specs, matrix, tmp_path, gpus=[0], max_jobs=1)
     assert len(calls) == 1
-    assert (specs[1][3].parent / "launcher.json").exists()
+    launcher = json.loads((specs[1][3].parent / "launcher.json").read_text())
+    assert launcher["workers_per_gpu"] == 1
 
 
 def test_resume_import_validates_before_copy(monkeypatch, tmp_path):

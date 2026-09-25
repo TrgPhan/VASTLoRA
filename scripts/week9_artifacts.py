@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+import hashlib
 
 import numpy as np
 import pandas as pd
@@ -97,6 +98,15 @@ def validate_run(path, *, config, method, seed, matrix):
         if reference_identity is not None and reference_identity != identity:
             raise ValueError("baseline and final references differ")
         reference_identity = identity
+        for key, column in (("rouge_l_precision", "rouge_l_precision"), ("rouge_l_recall", "rouge_l_recall"),
+                            ("mean_generated_tokens", "generated_tokens")):
+            if f"{stage}_{key}" in metrics:
+                if column not in details:
+                    raise ValueError(f"missing reported generation column: {column}")
+                values = details[column].astype(float)
+                if not np.isfinite(values).all() or (values < 0).any() or (key != "mean_generated_tokens" and (values > 1).any()):
+                    raise ValueError(f"invalid generation values: {key}")
+                _close(metrics[f"{stage}_{key}"], values.mean(), key)
 
     events = _read_csv(path.parent / "events.csv", EVENT_COLUMNS)
     total = exp["warmup_returns"] + exp["collected_returns"]
@@ -125,4 +135,62 @@ def validate_run(path, *, config, method, seed, matrix):
             raise ValueError(f"invalid {key}")
     identity = {"selected": selected, "groups": groups, "references": reference_identity,
                 "schedule": events[["client_id", "base_version", "arrival_version", "staleness"]].to_dict("list")}
+    milestones = exp.get("generation_eval_returns", [])
+    if milestones:
+        curve = payload.get("development_learning_curve", [])
+        if [r["measured_returns"] for r in curve] != milestones:
+            raise ValueError("missing or reordered learning curve")
+        for entry in curve:
+            record, _ = validate_milestone(path.parent / "milestones" / f"returns_{entry['measured_returns']:04d}",
+                                           config=config, method=method, seed=seed)
+            if record != entry:
+                raise ValueError("embedded learning curve differs from saved milestone")
     return payload, identity
+
+
+def validate_milestone(directory, *, config, method, seed):
+    record = json.loads((directory / "metrics.json").read_text(encoding="utf-8"))
+    exp, ds = config["experiment"], config["dataset"]
+    if (record["config_fingerprint"] != matrix_runner._runner_config_fingerprint(config)
+            or record["method"] != method or record["seed"] != seed
+            or record["measured_returns"] not in exp["generation_eval_returns"]
+            or record["phase"] not in {"development", "smoke"}
+            or record["total_returns"] != record["measured_returns"] + exp["warmup_returns"]):
+        raise ValueError("milestone identity/budget mismatch")
+    for name in ("adapter.pt", "eval_details.csv", "events.csv"):
+        if hashlib.sha256((directory / name).read_bytes()).hexdigest() != record["sha256"][name]:
+            raise ValueError(f"milestone artifact hash mismatch: {name}")
+    details = _read_csv(directory / "eval_details.csv", EVAL_COLUMNS, keep_default_na=False)
+    if len(details) != ds["eval_examples"] or details.source_id.duplicated().any():
+        raise ValueError("milestone evaluation identity/count mismatch")
+    metrics = record["metrics"]
+    _close(metrics["nll"], details.nll_sum.sum() / details.response_tokens.sum(), "milestone NLL")
+    for key in ("rouge_l", "rouge_l_precision", "rouge_l_recall", "exact_match"):
+        values = details[key].astype(float)
+        if not np.isfinite(values).all() or ((values < 0) | (values > 1)).any():
+            raise ValueError(f"invalid milestone {key}")
+        _close(metrics[key], values.mean(), key)
+    _close(metrics["mean_generated_tokens"], details.generated_tokens.mean(), "milestone generation length")
+    _close(metrics["generation_limit_rate"], _booleans(details.hit_generation_limit).mean(), "milestone limit rate")
+    events = _read_csv(directory / "events.csv", EVENT_COLUMNS)
+    if events.event.tolist() != list(range(record["total_returns"])):
+        raise ValueError("milestone event trace mismatch")
+    measured = _booleans(events.measured)
+    if measured.tolist() != [False] * exp["warmup_returns"] + [True] * record["measured_returns"]:
+        raise ValueError("milestone warmup/measured boundary mismatch")
+    trace = events.loc[measured]
+    harm = trace.accepted_loss > trace.current_loss + exp["harm_epsilon"]
+    late = trace.staleness >= exp["late_tau"]
+    _close(record["safety"]["harmful_update_rate"], harm.mean(), "milestone harmful")
+    _close(record["safety"]["late_event_count"], late.sum(), "milestone late events")
+    _close(record["safety"]["acceptance_rate"], _booleans(trace.update_accepted).mean(), "milestone acceptance")
+    if late.any():
+        _close(record["safety"]["late_harmful_update_rate"], harm[late].mean(), "milestone late harmful")
+    elif record["safety"]["late_harmful_update_rate"] is not None:
+        raise ValueError("no late events must be reported as unavailable")
+    presentations = record["total_returns"] * exp["local_steps"] * exp["local_batch_size"] * exp["gradient_accumulation_steps"]
+    if record["work"]["client_sample_presentations"] != presentations:
+        raise ValueError("milestone training budget mismatch")
+    if not 0 < record["work"]["client_unique_examples"] <= min(presentations, ds["max_train_examples"]):
+        raise ValueError("milestone unique sample count mismatch")
+    return record, details[["source_id", "reference", "response_tokens"]].to_dict("list")

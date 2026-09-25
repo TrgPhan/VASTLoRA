@@ -1,0 +1,25 @@
+{
+  "name": "rift-week9-1.5b-fedlora-comparison-v1",
+  "methods": ["raw", "freshness", "fedavg_lora", "fedex_lora", "flora_lora", "ffa_lora", "florg", "fedrot"],
+  "seeds": [9301, 9302, 9303],
+  "regimes": ["noniid_high_staleness", "iid_high_staleness"],
+  "model_overrides": {
+    "name": "Qwen/Qwen2.5-1.5B-Instruct",
+    "revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+    "load_in_4bit": true
+  },
+  "gates": {
+    "minimum_paired_seeds": 3,
+    "minimum_late_events": 8,
+    "baselines": ["raw", "freshness", "fedavg_lora", "fedex_lora", "flora_lora", "ffa_lora", "florg", "fedrot"],
+    "primary": "paired comparison under the same async trace; report quality, harmful updates, coverage and wall-clock together"
+  },
+  "notes": [
+    "fedavg_lora is factor-space FedAvg over client LoRA B/A parameters.",
+    "flora_lora uses the official FLoRA B-horizontal/A-vertical stacking equation; in this immediate-async runner the arriving block is the exact client innovation and is recompressed only at the shared server rank cap.",
+    "fedex_lora folds the exact mean-product residual into a separate frozen-base residual path.",
+    "florg uses a single trainable latent matrix, Gram aggregation and Procrustes alignment; it is not a two-factor LoRA adapter.",
+    "All methods share the same Dolly split, client partitions, arrival trace, local budget and held-out evaluation.",
+    "raw and freshness remain matched async controls; they are not claimed as external paper reproductions."
+  ]
+}

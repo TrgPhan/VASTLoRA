@@ -18,6 +18,10 @@ from riftlora.lowrank import (
 
 Method = Literal[
     "raw",
+    "fedavg_lora",
+    "fedex_lora",
+    "flora_lora",
+    "florg",
     "fedex",
     "freshness",
     "fedrot",

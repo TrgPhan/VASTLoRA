@@ -22,12 +22,14 @@ def normalized(text):
 def prompt_ids(tokenizer, item, config):
     if config.get("prompt_format", "plain_v1") == "plain_v1":
         return tokenizer(prompt_text(item), add_special_tokens=True)["input_ids"]
-    if config["prompt_format"] != "chat_v1" or not getattr(tokenizer, "chat_template", None):
+    if config["prompt_format"] not in {"chat_v1", "chat_concise_v1"} or not getattr(tokenizer, "chat_template", None):
         raise ValueError("chat_v1 requires the pinned tokenizer's chat template")
     content = item["instruction"].strip()
     context = item.get("context", "").strip()
     if context:
         content += "\n\nContext:\n" + context
+    if config["prompt_format"] == "chat_concise_v1":
+        content += "\n\nAnswer directly and briefly. Do not add explanations unless the question asks for them."
     ids = tokenizer.apply_chat_template(
         [{"role": "user", "content": content}], tokenize=True, add_generation_prompt=True,
         return_dict=False,
@@ -92,6 +94,8 @@ def prepare_records(records, tokenizer, config, max_length):
         seen.add(identity)
         try:
             encode_example(tokenizer, row, config, max_length)
+            for prompt_format in config.get("eligibility_prompt_formats", []):
+                encode_example(tokenizer, row, {**config, "prompt_format": prompt_format}, max_length)
         except TokenBudgetError:
             audit["overlength_rows"] += 1
             continue
@@ -104,6 +108,8 @@ def prepare_records(records, tokenizer, config, max_length):
         for k, v in splits.items()
     }
     audit["definition"] = "length-filtered short QA; group split by context, or instruction when context is absent"
+    if "eligibility_prompt_formats" in config:
+        audit["eligibility_prompt_formats"] = config["eligibility_prompt_formats"]
     return splits, audit
 
 
@@ -203,11 +209,13 @@ def evaluate_generation(model, tokenizer, dataset, *, dataset_config, max_length
             )[0, len(prompt):]
             prediction = tokenizer.decode(generated, skip_special_tokens=True).strip()
             reference = item["response"].strip()
-            rouge = scorer.score(reference, prediction)["rougeL"].fmeasure
+            rouge = scorer.score(reference, prediction)["rougeL"]
             rows.append({"eval_index": start + offset, "source_id": item["source_id"],
+                         "instruction": item["instruction"], "context": item.get("context", ""),
                          "category": item["category"], "reference": reference, "prediction": prediction,
                          "nll_sum": float(nll_sum), "response_tokens": int(tokens),
-                         "response_nll": float(nll_sum / tokens), "rouge_l": rouge,
+                         "response_nll": float(nll_sum / tokens), "rouge_l": rouge.fmeasure,
+                         "rouge_l_precision": rouge.precision, "rouge_l_recall": rouge.recall,
                          "exact_match": int(normalized(reference) == normalized(prediction)),
                          "generated_tokens": len(generated),
                          "hit_generation_limit": bool(len(generated) == max_new_tokens
@@ -219,6 +227,8 @@ def evaluate_generation(model, tokenizer, dataset, *, dataset_config, max_length
         "binary_nll": None, "label_nll": None, "eos_nll": None, "nll": nll,
         "token_nll": nll, "perplexity": math.exp(nll) if nll < 700 else None,
         "mean_example_nll": mean("response_nll"), "rouge_l": mean("rouge_l"),
+        "rouge_l_precision": mean("rouge_l_precision"), "rouge_l_recall": mean("rouge_l_recall"),
+        "mean_generated_tokens": mean("generated_tokens"),
         "exact_match": mean("exact_match"), "generation_limit_rate": mean("hit_generation_limit"),
         "response_tokens": sum(r["response_tokens"] for r in rows),
     }, rows

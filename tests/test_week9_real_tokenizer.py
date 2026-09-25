@@ -63,6 +63,23 @@ def test_actual_prompt_length_is_filtered_and_reference_not_leaked(real_setup):
     assert audit["overlength_rows"] == 1 and sum(map(len, splits.values())) == 1
 
 
+def test_prompt_study_retains_identical_population(real_setup):
+    tokenizer, config = real_setup
+    formats = ["chat_v1", "chat_concise_v1"]
+    ds = {**config["dataset"], "eligibility_prompt_formats": formats}
+    rows = [{**example(context="Some context. " * n), "instruction": f"Question {n}?"} for n in range(70)]
+    identities = []
+    for prompt_format in formats:
+        splits, audit = generation.prepare_records(rows, tokenizer, {**ds, "prompt_format": prompt_format}, 256)
+        assert audit["overlength_rows"] > 0
+        assert sum(map(len, splits.values())) > 0
+        identities.append({key: [r["source_id"] for r in group] for key, group in splits.items()})
+    assert identities[0] == identities[1]
+    original = generation.prompt_ids(tokenizer, example(), {**ds, "prompt_format": "chat_v1"})
+    concise = generation.prompt_ids(tokenizer, example(), {**ds, "prompt_format": "chat_concise_v1"})
+    assert len(concise) > len(original)
+
+
 def test_real_tokenizer_tiny_peft_response_loss_and_gradient(real_setup):
     from peft import LoraConfig, get_peft_model
     from transformers import Qwen2Config, Qwen2ForCausalLM

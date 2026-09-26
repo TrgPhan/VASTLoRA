@@ -52,9 +52,13 @@ def isolated_evaluation(model):
             np.random.set_state(numpy_rng)
 
 
-def evaluate_server(model, server_state, *, rank, evaluate):
+def evaluate_server(model, server_state, *, rank, evaluate, factor_state=None, freeze_a=False):
     with isolated_evaluation(model):
-        load_compact_adapter_state(model, server_state, active_rank=rank, initialize_free_directions=False)
+        if factor_state is not None:
+            from riftlora.baselines.factor_averaging import load_factor_state
+            load_factor_state(model, factor_state, active_rank=rank, freeze_a=freeze_a)
+        else:
+            load_compact_adapter_state(model, server_state, active_rank=rank, initialize_free_directions=False)
         return evaluate()
 
 

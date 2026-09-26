@@ -35,8 +35,8 @@ COMPETITOR_SPECS: dict[str, CompetitorSpec] = {
     ),
     "fedavg_lora": CompetitorSpec(
         name="fedavg_lora",
-        fidelity="matched immediate-async FedAvg over LoRA factors",
-        description="Vanilla factor-space FedAvg control for federated LoRA.",
+        fidelity="persistent A/B FedAvg operator; immediate-async and prefix-rank adaptation",
+        description="Direct factor interpolation without SVD reload; native unmeasured warmup, no DP.",
     ),
     "fedex_lora": CompetitorSpec(
         name="fedex_lora",
@@ -53,8 +53,8 @@ COMPETITOR_SPECS: dict[str, CompetitorSpec] = {
     ),
     "ffa_lora": CompetitorSpec(
         name="ffa_lora",
-        fidelity="matched FFA-LoRA one-factor control",
-        description="Frozen A factor with factor aggregation of the trainable B factor.",
+        fidelity="FFA-LoRA immutable shared A0/B-only mean; immediate-async and prefix-rank adaptation",
+        description="A0 stays fixed through dispatch, training and evaluation; only B is aggregated, no DP.",
     ),
     "florg": CompetitorSpec(
         name="florg",

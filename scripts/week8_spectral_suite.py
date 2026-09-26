@@ -1,4 +1,4 @@
-"""Frozen Week 8 protocol overlay for the three spectral FedLoRA baselines."""
+"""Frozen Week 8 protocol overlays for isolated FedLoRA baseline suites."""
 from __future__ import annotations
 
 import argparse
@@ -8,9 +8,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 METHODS = ("flexlora", "florist", "florg")
 SUITE_VERSION = "week8-spectral-v1"
+SUITES = {
+    "spectral_only": (METHODS, SUITE_VERSION),
+    "factor_only": (("fedavg_lora", "ffa_lora"), "week8-factor-v2"),
+}
 
 
-def build_matrix(*, smoke: bool = False) -> dict:
+def build_matrix(*, smoke: bool = False, suite: str = "spectral_only") -> dict:
+    if suite not in SUITES:
+        raise ValueError(f"Unknown method suite: {suite}")
     matrix = json.loads((ROOT / "configs/rift_core_heldout_confirmation_matrix.json").read_text(encoding="utf-8"))
     matrix["name"] = SUITE_VERSION + ("-smoke" if smoke else "-confirmation")
     matrix["methods"] = list(METHODS)
@@ -27,6 +33,21 @@ def build_matrix(*, smoke: bool = False) -> dict:
         "No server calibration optimization is used by these three methods. Monitor data only measures harmful updates.",
         "Same model/data revisions and held-out offsets as the base matrix; do not tune on these confirmation seeds.",
     ]
+    if suite == "factor_only":
+        methods, version = SUITES[suite]
+        matrix["name"] = version + ("-smoke" if smoke else "-confirmation")
+        matrix["methods"] = list(methods)
+        matrix["description"] = "Persistent-factor FedAvg/FFA under the matched immediate-async Week 8 protocol."
+        matrix["experiment"].pop("florist_energy", None)
+        matrix["experiment"].pop("spectral_suite_version", None)
+        matrix["experiment"]["factor_implementation"] = "persistent_factors_v2"
+        matrix["notes"] = [
+            "Only fedavg_lora and ffa_lora run; four tasks and seeds 6101-6106 are unchanged.",
+            "FedAvg retains actual A/B snapshots; FFA preserves shared immutable A0 and aggregates only B.",
+            "Native method during unmeasured warmup; no freshness warmup or SVD factor reload.",
+            "Immediate-async interpolation and heterogeneous prefix ranks are explicit paper adaptations, no DP.",
+            "Separate output root; legacy factor results must not be reused or merged as corrected baselines.",
+        ]
     if smoke:
         matrix["tasks"] = [matrix["tasks"][0]]
         matrix["seeds"] = [6101]
@@ -39,18 +60,21 @@ def build_matrix(*, smoke: bool = False) -> dict:
 
 
 def job_list(matrix: dict) -> list[tuple[str, str, str, int]]:
-    if matrix["methods"] != list(METHODS):
-        raise ValueError("This suite may run only flexlora, florist and florg")
+    candidates = [methods for methods, version in SUITES.values()
+                  if matrix["name"] in {version + "-smoke", version + "-confirmation"}]
+    if len(candidates) != 1 or matrix["methods"] != list(candidates[0]):
+        raise ValueError("Method selection must match the declared isolated suite")
     return [(t["name"], r["name"], m, int(s)) for t in matrix["tasks"]
-            for r in matrix["regimes"] for m in METHODS for s in matrix["seeds"]]
+            for r in matrix["regimes"] for m in candidates[0] for s in matrix["seeds"]]
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--suite", choices=tuple(SUITES), default="spectral_only")
     args = parser.parse_args()
-    matrix = build_matrix(smoke=args.smoke)
+    matrix = build_matrix(smoke=args.smoke, suite=args.suite)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(matrix, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"matrix": str(args.output), "methods": matrix["methods"], "jobs": len(job_list(matrix))}))

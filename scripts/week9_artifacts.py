@@ -45,6 +45,10 @@ def _booleans(series):
 def validate_run(path, *, config, method, seed, matrix):
     """Return verified payload and data identity; dirty provenance is checked by callers."""
     payload = json.loads(path.read_text(encoding="utf-8"))
+    if method in {"fedavg_lora", "ffa_lora"}:
+        from riftlora.baselines.factor_averaging import FACTOR_IMPLEMENTATION
+        if payload.get("factor_implementation") != FACTOR_IMPLEMENTATION:
+            raise ValueError("obsolete factor implementation; rerun FedAvg/FFA-LoRA")
     expected = matrix_runner._runner_config_fingerprint(config)
     if (payload.get("config_fingerprint") != expected
             or matrix_runner._runner_config_fingerprint(payload["config"]) != expected

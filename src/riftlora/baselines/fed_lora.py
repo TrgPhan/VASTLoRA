@@ -1,4 +1,4 @@
-"""Faithful factor-space FedAvg and FedEx-LoRA aggregation primitives.
+"""FedAvg exports and the legacy compact-state FedEx-LoRA adaptation.
 
 The runner uses an immediate-arrival adaptation of the paper round: the
 server interpolates the current state with one returned client state. FedAvg
@@ -16,6 +16,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from riftlora.lowrank import CompactSVD, LowRankMatrix, compact_svd
+from .factor_averaging import fedavg_aggregate_factor_state
 from riftlora.scale.peft_bridge import (
     FactorSnapshot,
     _compact_to_lora_factors,
@@ -56,38 +57,6 @@ def _client_factors(
     client_b = _pad_columns(client.b[:, :active_rank], max_rank)
     client_a = _pad_rows(client.a[:active_rank, :], max_rank)
     return server_b, server_a, client_b, client_a
-
-
-def fedavg_aggregate_factor_state(
-    server: Mapping[str, CompactSVD],
-    client_after: Mapping[str, FactorSnapshot],
-    *,
-    active_rank: int,
-    weight: float,
-    max_rank: int,
-    rank_rtol: float = 1e-5,
-) -> dict[str, CompactSVD]:
-    """Apply vanilla FedAvg to the LoRA ``B`` and ``A`` factors.
-
-    This intentionally does not average products. The product-of-means
-    discrepancy is the control that FedEx-LoRA is designed to remove.
-    """
-    _validate_common(
-        server, client_after, active_rank=active_rank, weight=weight, max_rank=max_rank
-    )
-    result: dict[str, CompactSVD] = {}
-    for name, compact in server.items():
-        server_b, server_a, client_b, client_a = _client_factors(
-            compact, client_after[name], active_rank=active_rank, max_rank=max_rank
-        )
-        next_b = (1.0 - weight) * server_b + weight * client_b
-        next_a = (1.0 - weight) * server_a + weight * client_a
-        result[name] = compact_svd(
-            LowRankMatrix(next_b * client_after[name].scaling, next_a),
-            rtol=rank_rtol,
-            max_rank=max_rank,
-        )
-    return result
 
 
 def fedex_aggregate_factor_state(

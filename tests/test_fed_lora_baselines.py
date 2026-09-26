@@ -30,13 +30,14 @@ def _client(a, b, scaling=1.0):
 
 
 def test_fedavg_averages_factors_not_products():
-    server = _state()
+    server = _client([[1.0, 0.0]], [[2.0], [0.0]])
     client = _client([[2.0, 0.0]], [[3.0], [0.0]])
     result = fedavg_aggregate_factor_state(
-        server, client, active_rank=1, weight=0.5, max_rank=1, rank_rtol=1e-7
+        server, client, active_rank=1, weight=0.5, max_rank=1
     )
     expected = (0.5 * 2.0 + 0.5 * 3.0) * (0.5 * 1.0 + 0.5 * 2.0)
-    torch.testing.assert_close(result["projection"].dense(), torch.tensor([[expected, 0.0], [0.0, 0.0]]))
+    value = result["projection"]
+    torch.testing.assert_close(value.scaling * value.b @ value.a, torch.tensor([[expected, 0.0], [0.0, 0.0]]))
 
 
 def test_fedex_residual_recovers_weighted_product_exactly():

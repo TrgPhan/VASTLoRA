@@ -234,6 +234,10 @@ def _completed_result_matches(
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
+    if method in {"fedavg_lora", "ffa_lora"}:
+        from riftlora.baselines.factor_averaging import FACTOR_IMPLEMENTATION
+        if payload.get("factor_implementation") != FACTOR_IMPLEMENTATION:
+            return False
     required_schema = int(matrix.get("required_schema_version", 3))
     provenance = payload.get("provenance", {})
     expected_commit = _runner_git_commit()

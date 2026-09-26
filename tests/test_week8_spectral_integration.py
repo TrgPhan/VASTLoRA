@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import run_kaggle_3b as runner
 from run_week8_classification_matrix import _build_config
-from week8_spectral_suite import METHODS, build_matrix, job_list
+from week8_spectral_suite import METHODS, SUITES, build_matrix, job_list
 from riftlora.baselines import attach_florg_adapters
 
 
@@ -38,7 +38,7 @@ def one_thread():
 
 
 @pytest.mark.parametrize("task", ["sst2", "qnli", "mnli_m", "mnli_mm"])
-@pytest.mark.parametrize("method", METHODS)
+@pytest.mark.parametrize("method", (*METHODS, "fedavg_lora", "ffa_lora"))
 def test_classification_runner_real_tiny_qwen(monkeypatch, task, method):
     from datasets import Dataset, DatasetDict
     import datasets
@@ -76,13 +76,43 @@ def test_classification_runner_real_tiny_qwen(monkeypatch, task, method):
         model = get_peft_model(model, LoraConfig(r=2, lora_alpha=2, target_modules=["q_proj", "v_proj"],
                                                  lora_dropout=0., task_type="CAUSAL_LM"))
         monkeypatch.setattr(runner, "_load_model", lambda c: (Tokenizer(), model))
+    factor_calls = []
+    if method in {"fedavg_lora", "ffa_lora"}:
+        initial = runner.capture_factor_snapshot(model)
+        original_aggregate = runner.fedavg_aggregate_factor_state
+
+        def aggregate(server, client, **kwargs):
+            if method == "ffa_lora":
+                for name in initial:
+                    assert torch.equal(server[name].a, initial[name].a)
+                    assert torch.equal(client[name].a, initial[name].a)
+            result = original_aggregate(server, client, **kwargs)
+            factor_calls.append(result)
+            return result
+
+        def forbidden_compact_load(*args, **kwargs):
+            pytest.fail("factor methods must never reload SVD factors")
+
+        monkeypatch.setattr(runner, "fedavg_aggregate_factor_state", aggregate)
+        monkeypatch.setattr(runner, "load_compact_adapter_state", forbidden_compact_load)
     runner._validate_config(cfg, method)
     result = runner.run_experiment(cfg, method=method, seed=6101)
     assert result["method"] == method and "async" in result["competitor_fidelity"]
     assert len(result["events"]) == 4 and len(result["final_eval_details"]) == 6
     assert math.isfinite(result["metrics"]["final_class_nll"])
     assert result["metrics"]["measured_event_count"] == 3
-    if method != "florg":
+    if method in {"fedavg_lora", "ffa_lora"}:
+        from riftlora.baselines.factor_averaging import FACTOR_IMPLEMENTATION
+        assert result["factor_implementation"] == FACTOR_IMPLEMENTATION
+        assert len(factor_calls) == 4  # Includes native warmup, not freshness.
+        final = runner.capture_factor_snapshot(model)
+        for name, expected in factor_calls[-1].items():
+            assert torch.equal(final[name].a, expected.a)
+            assert torch.equal(final[name].b, expected.b)
+        if method == "ffa_lora":
+            assert all(torch.equal(final[n].a, initial[n].a) for n in initial)
+            assert any(torch.count_nonzero(final[n].b) for n in initial)
+    elif method != "florg":
         measured = result["events"][1:]
         assert all(e["spectral_rank_after_cap"] <= 4 for e in measured)
         assert all(e["route"] == method + "_async_full_state" for e in measured)
@@ -124,7 +154,9 @@ def test_notebook_compiles_and_only_uses_suite_methods():
     assert "--force" not in all_source
 
 
-def test_notebook_launcher_builds_only_72_flat_commands(monkeypatch, tmp_path):
+@pytest.mark.parametrize("suite", ["spectral_only", "factor_only"])
+@pytest.mark.parametrize("smoke", [False, True])
+def test_notebook_launcher_builds_only_selected_flat_commands(monkeypatch, tmp_path, suite, smoke):
     import subprocess
     path = ROOT / "notebooks/kaggle_qwen_1_5b_week8_heldout_classification.ipynb"
     nb = json.loads(path.read_text(encoding="utf-8"))
@@ -141,15 +173,52 @@ def test_notebook_launcher_builds_only_72_flat_commands(monkeypatch, tmp_path):
         commands.append(command)
         return Process()
     monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
+    methods = SUITES[suite][0]
+    jobs = job_list(build_matrix(suite=suite, smoke=smoke))
     scope = {"RUN_TRAINING": True, "GPU_IDS": [0, 1], "OUTPUT_ROOT": tmp_path,
-             "jobs": job_list(build_matrix()), "METHODS": METHODS, "SHARD_INDEX": 0,
+             "jobs": jobs, "METHODS": methods, "SHARD_INDEX": 0,
              "sys": sys, "os": os, "json": json, "MATRIX": tmp_path / "matrix.json",
              "RUNNER": ROOT / "scripts/run_week8_classification_matrix.py", "REPO_DIR": ROOT,
              "subprocess": types.SimpleNamespace(Popen=popen, STDOUT=subprocess.STDOUT)}
     exec(compile(source, str(path), "exec"), scope)
-    assert len(commands) == 72
-    assert {c[c.index("--method") + 1] for c in commands} == set(METHODS)
+    assert len(commands) == len(methods) * (1 if smoke else 24)
+    assert {c[c.index("--method") + 1] for c in commands} == set(methods)
     assert all("--force" not in c for c in commands)
+
+
+def test_factor_suite_preserves_locked_confirmation_without_spectral_methods():
+    matrix = build_matrix(suite="factor_only")
+    original = json.loads((ROOT / "configs/rift_core_heldout_confirmation_matrix.json").read_text())
+    for field in ("tasks", "regimes", "seeds", "runner"):
+        assert matrix[field] == original[field]
+    for key, value in original["experiment"].items():
+        assert matrix["experiment"][key] == value
+    assert matrix["experiment"]["factor_implementation"] == "persistent_factors_v2"
+    jobs = job_list(matrix)
+    assert len(jobs) == len(set(jobs)) == 48
+    assert {j[2] for j in jobs} == {"fedavg_lora", "ffa_lora"}
+    matrix["methods"].append("rift_core")
+    with pytest.raises(ValueError):
+        job_list(matrix)
+
+
+@pytest.mark.parametrize("suite", ["spectral_only", "factor_only"])
+@pytest.mark.parametrize("mode", ["smoke", "confirmation"])
+def test_notebook_matrix_cell_uses_selected_suite_and_separate_outputs(tmp_path, suite, mode):
+    nb = json.loads((ROOT / "notebooks/kaggle_qwen_1_5b_week8_heldout_classification.ipynb").read_text())
+    source = next("".join(c["source"]) for c in nb["cells"]
+                  if c["cell_type"] == "code" and "matrix = build_matrix(" in "".join(c["source"]))
+    calls = []
+    scope = {"build_matrix": build_matrix, "job_list": job_list, "RUN_MODE": mode,
+             "METHOD_SUITE": suite, "METHODS": SUITES[suite][0], "SUITE_VERSION": SUITES[suite][1],
+             "WORK_ROOT": tmp_path, "REPO_DIR": ROOT, "RUNNER": ROOT / "scripts/run_week8_classification_matrix.py",
+             "json": json, "sys": sys, "SHARD_COUNT": 2, "SHARD_INDEX": 1,
+             "resolved_commit": "test-release", "subprocess": types.SimpleNamespace(run=lambda *a, **k: calls.append(a))}
+    exec(compile(source, "matrix_cell", "exec"), scope)
+    assert scope["jobs"] == scope["all_jobs"][1::2]
+    assert SUITES[suite][1] in str(scope["OUTPUT_ROOT"])
+    assert mode in str(scope["OUTPUT_ROOT"])
+    assert len(calls) == 1 and "--dry-run" in calls[0][0]
 
 
 def test_completion_rejects_old_commit_and_accepts_same_run(tmp_path, monkeypatch):

@@ -39,6 +39,9 @@ from riftlora.baselines import (
     spectral_async_aggregate,
 )
 from riftlora.data import iid_partition_indices, label_shard_partition_indices
+from riftlora.baselines.factor_averaging import (
+    FACTOR_IMPLEMENTATION, FACTOR_METHODS, factors_to_compact, load_factor_state,
+)
 from riftlora.diagnostics import competitor_fidelity
 from riftlora.lowrank import CompactSVD
 from riftlora.scale import (
@@ -288,6 +291,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int,
     tokenizer, model = _load_model(config)
     if method == "ffa_lora":
         _freeze_lora_a(model)
+    factor_snapshots = {0: capture_factor_snapshot(model)} if method in FACTOR_METHODS else None
     fedex_controller = FedExResidualController(model) if method == "fedex_lora" else None
     component_score_objective = str(
         experiment.get("component_score_objective", "label_nll")
@@ -383,13 +387,17 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int,
         stale_state = snapshots[event.base_version]
         if fedex_controller is not None:
             fedex_controller.set_state(residual_snapshots[event.base_version])
-        load_compact_adapter_state(
-            model,
-            stale_state,
-            active_rank=active_rank,
-            seed=seed * 10000 + event_index,
-            initialize_free_directions=(method not in {"flexlora", "florist"} or event.base_version == 0),
-        )
+        if factor_snapshots is not None:
+            load_factor_state(model, factor_snapshots[event.base_version],
+                              active_rank=active_rank, freeze_a=method == "ffa_lora")
+        else:
+            load_compact_adapter_state(
+                model,
+                stale_state,
+                active_rank=active_rank,
+                seed=seed * 10000 + event_index,
+                initialize_free_directions=(method not in {"flexlora", "florist"} or event.base_version == 0),
+            )
         before = capture_factor_snapshot(model)
         local_loss = _train_client(
             model,
@@ -417,7 +425,8 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int,
         )
 
         accepted_method = (
-            "freshness" if event_index < experiment["warmup_returns"] else method
+            "freshness" if event_index < experiment["warmup_returns"]
+            and factor_snapshots is None else method
         )
         if accepted_method == "spectral_surgery_posthoc":
             accepted_method = str(experiment.get("spectral_posthoc_base_method", "freshness"))
@@ -442,14 +451,16 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int,
             else None
         )
         if accepted_method in {"fedavg_lora", "ffa_lora"}:
-            next_state = fedavg_aggregate_factor_state(
-                current_state,
+            next_factors = fedavg_aggregate_factor_state(
+                factor_snapshots[event.arrival_version],
                 after,
                 active_rank=active_rank,
                 weight=experiment["server_update_weight"],
                 max_rank=experiment["server_max_rank"],
-                rank_rtol=experiment["rank_rtol"],
+                freeze_a=method == "ffa_lora",
             )
+            factor_snapshots[event.new_server_version] = next_factors
+            next_state = factors_to_compact(next_factors, rank_rtol=experiment["rank_rtol"])
             freshness = math.exp(-transport_config.freshness_lambda * event.staleness)
             rhos.append(1.0)
             freshness_values.append(freshness)
@@ -897,12 +908,16 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int,
             if not math.isfinite(current_monitor_loss):
                 if fedex_controller is not None:
                     fedex_controller.set_state(residual_snapshots[event.arrival_version])
-                load_compact_adapter_state(
-                    model,
-                    current_state,
-                    active_rank=experiment["server_max_rank"],
-                    initialize_free_directions=False,
-                )
+                if factor_snapshots is not None:
+                    load_factor_state(model, factor_snapshots[event.arrival_version],
+                                      active_rank=experiment["server_max_rank"], freeze_a=method == "ffa_lora")
+                else:
+                    load_compact_adapter_state(
+                        model,
+                        current_state,
+                        active_rank=experiment["server_max_rank"],
+                        initialize_free_directions=False,
+                    )
                 current_monitor_loss = _mean_classification_loss(
                     model,
                     tokenizer,
@@ -912,12 +927,16 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int,
                     batch_size=experiment["eval_batch_size"],
                     objective=str(experiment.get("monitor_objective", "label_nll")),
                 )
-            load_compact_adapter_state(
-                model,
-                next_state,
-                active_rank=experiment["server_max_rank"],
-                initialize_free_directions=False,
-            )
+            if factor_snapshots is not None:
+                load_factor_state(model, next_factors, active_rank=experiment["server_max_rank"],
+                                  freeze_a=method == "ffa_lora")
+            else:
+                load_compact_adapter_state(
+                    model,
+                    next_state,
+                    active_rank=experiment["server_max_rank"],
+                    initialize_free_directions=False,
+                )
             if fedex_controller is not None:
                 fedex_controller.set_state(fedex_next_residual)
             accepted_monitor_loss = _mean_classification_loss(
@@ -1005,6 +1024,8 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int,
             checkpoint_start = time.perf_counter()
             checkpoint_metrics, checkpoint_details = evaluate_server(
                 model, server_state, rank=experiment["server_max_rank"],
+                factor_state=next_factors if factor_snapshots is not None else None,
+                freeze_a=method == "ffa_lora",
                 evaluate=lambda: evaluate_task(
                     model, tokenizer, validation, dataset_config=dataset_config,
                     max_length=config["model"]["max_length"], batch_size=experiment["eval_batch_size"]),
@@ -1025,12 +1046,16 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int,
             if measured_returns == experiment["collected_returns"]:
                 final_at_milestone = (checkpoint_metrics, checkpoint_details)
 
-    load_compact_adapter_state(
-        model,
-        server_state,
-        active_rank=experiment["server_max_rank"],
-        initialize_free_directions=False,
-    )
+    if factor_snapshots is not None:
+        load_factor_state(model, next_factors, active_rank=experiment["server_max_rank"],
+                          freeze_a=method == "ffa_lora")
+    else:
+        load_compact_adapter_state(
+            model,
+            server_state,
+            active_rank=experiment["server_max_rank"],
+            initialize_free_directions=False,
+        )
     if fedex_controller is not None:
         fedex_controller.set_state(residual_snapshots[len(event_rows)])
     posthoc_diagnostics = None
@@ -1303,6 +1328,15 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int,
     result = {
         "schema_version": 5,
         "method": method,
+        "factor_implementation": FACTOR_IMPLEMENTATION if factor_snapshots is not None else None,
+        "factor_protocol": ({
+            "aggregation": "immediate_async_whole_state_interpolation",
+            "rank_policy": "shared_A0_zero_pad_B" if method == "ffa_lora" else "prefix_zero_pad_A_and_B",
+            "warmup": "native_method_unmeasured_returns",
+            "initialization": "shared_initial_PEFT_factors",
+            "server_weight": experiment["server_update_weight"],
+            "differential_privacy": False,
+        } if factor_snapshots is not None else None),
         "seed": seed,
         "competitor_fidelity": competitor_fidelity(method),
         "model": config["model"]["name"],

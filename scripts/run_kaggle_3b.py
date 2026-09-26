@@ -36,8 +36,10 @@ from riftlora.baselines import (
     florg_aggregate_state,
     load_florg_state,
     mask_florg_gradients,
+    spectral_async_aggregate,
 )
 from riftlora.data import iid_partition_indices, label_shard_partition_indices
+from riftlora.diagnostics import competitor_fidelity
 from riftlora.lowrank import CompactSVD
 from riftlora.scale import (
     TransportConfig,
@@ -71,6 +73,8 @@ METHODS = (
     "fedavg_lora",
     "fedex_lora",
     "flora_lora",
+    "flexlora",
+    "florist",
     "florg",
     "ffa_lora",
     "fedex",
@@ -384,7 +388,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int,
             stale_state,
             active_rank=active_rank,
             seed=seed * 10000 + event_index,
-            initialize_free_directions=True,
+            initialize_free_directions=(method not in {"flexlora", "florist"} or event.base_version == 0),
         )
         before = capture_factor_snapshot(model)
         local_loss = _train_client(
@@ -473,6 +477,21 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int,
             residual_scales.append(1.0)
             accepted_scales.append(1.0)
             accepted_routes.append("fedex_exact_residual")
+            for name in next_state:
+                histories[name].append(next_state[name])
+        elif accepted_method in {"flexlora", "florist"}:
+            next_state, core_diagnostics = spectral_async_aggregate(
+                current_state, after, active_rank=active_rank,
+                weight=experiment["server_update_weight"], method=accepted_method,
+                max_rank=experiment["server_max_rank"],
+                energy=float(experiment.get("florist_energy", 0.9)),
+                rank_rtol=experiment["rank_rtol"],
+            )
+            rhos.append(1.0)
+            freshness_values.append(math.exp(-transport_config.freshness_lambda * event.staleness))
+            residual_scales.append(1.0)
+            accepted_scales.append(1.0)
+            accepted_routes.append(f"{accepted_method}_async_full_state")
             for name in next_state:
                 histories[name].append(next_state[name])
         elif accepted_method == "flora_lora":
@@ -1285,6 +1304,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int,
         "schema_version": 5,
         "method": method,
         "seed": seed,
+        "competitor_fidelity": competitor_fidelity(method),
         "model": config["model"]["name"],
         "task": dataset_config.get(
             "run_name", dataset_config.get("task", dataset_config["hub_path"])
@@ -1355,7 +1375,7 @@ def _run_florg_experiment(
     for event_index, event in enumerate(trace.records):
         active_rank = int(event.rank)
         stale_state = snapshots[event.base_version]
-        load_florg_state(model, stale_state)
+        load_florg_state(model, stale_state, active_rank=active_rank)
         local_loss = _train_client(
             model,
             tokenizer,
@@ -1440,9 +1460,9 @@ def _run_florg_experiment(
             "retained_rank": active_rank,
             "total_rank": active_rank,
             "retained_fraction": 1.0,
-            "predicted_gain": float("nan"),
-            "relative_predicted_gain": float("nan"),
-            "gate_mean_delta": float("nan"),
+            "predicted_gain": None,
+            "relative_predicted_gain": None,
+            "gate_mean_delta": None,
             "route": "florg_gram_procrustes",
             "mean_left_rank": active_rank,
             "mean_right_rank": active_rank,
@@ -1459,6 +1479,9 @@ def _run_florg_experiment(
     )
     measured_rows = [row for row in event_rows if row["measured"]]
     late_rows = [row for row in measured_rows if row["staleness"] >= int(experiment.get("late_tau", 8))]
+    extreme_rows = [row for row in measured_rows if row["staleness"] >= int(experiment.get("extreme_tau", 16))]
+    return_counts = {client: sum(row["client_id"] == client for row in measured_rows)
+                     for client in range(int(experiment["num_clients"]))}
     harm_values = [bool(row["harmful_update"]) for row in measured_rows]
     late_harm_values = [bool(row["late_harmful_update"]) for row in late_rows]
     deltas = [row["accepted_loss"] - row["current_loss"] for row in measured_rows]
@@ -1475,6 +1498,7 @@ def _run_florg_experiment(
         "final_binary_nll": final["binary_nll"],
         "baseline_class_nll": baseline["class_nll"],
         "final_class_nll": final["class_nll"],
+        "eval_example_count": len(final_details),
         "baseline_label_nll": baseline["label_nll"],
         "final_label_nll": final["label_nll"],
         "baseline_eos_nll": baseline["eos_nll"],
@@ -1486,13 +1510,18 @@ def _run_florg_experiment(
         "max_staleness": max([row["staleness"] for row in measured_rows], default=0),
         "harmful_update_rate": _mean(harm_values),
         "late_harmful_update_rate": _mean(late_harm_values),
-        "extreme_harmful_update_rate": _mean([row["extreme_harmful_update"] for row in measured_rows]),
+        "extreme_harmful_update_rate": _mean([row["extreme_harmful_update"] for row in extreme_rows]),
         "acceptance_rate": 1.0,
-        "client_return_coverage": 1.0,
-        "min_client_returns": min((sum(row["client_id"] == client for row in measured_rows)
-                                    for client in range(int(experiment["num_clients"]))), default=0),
+        "client_return_coverage": sum(count > 0 for count in return_counts.values()) / len(return_counts),
+        "min_client_returns": min(return_counts.values(), default=0),
+        "measured_return_counts": return_counts,
+        "measured_accept_counts": return_counts.copy(),
         "measured_event_count": len(measured_rows),
         "late_event_count": len(late_rows),
+        "extreme_event_count": len(extreme_rows),
+        "cumulative_late_harm": sum(max(0., delta) for delta in late_deltas),
+        "normalized_cumulative_late_harm": _mean([max(0., delta) for delta in late_deltas]),
+        "trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad),
         "worst_step_loss_increase": max([0.0, *deltas]),
         "worst_late_step_loss_increase": max([0.0, *late_deltas]),
         "monitor_loss_change": _mean(deltas),
@@ -1530,6 +1559,7 @@ def _run_florg_experiment(
         "schema_version": 5,
         "method": "florg",
         "seed": seed,
+        "competitor_fidelity": competitor_fidelity("florg"),
         "model": config["model"]["name"],
         "task": dataset_config.get("run_name", dataset_config.get("task", dataset_config["hub_path"])),
         "regime": experiment.get("regime_name", "default"),
@@ -1656,8 +1686,8 @@ def _load_florg_model(config: Mapping[str, Any]):
         )
     elif torch.cuda.is_available():
         model = model.to("cuda")
-        for parameter in model.parameters():
-            parameter.requires_grad_(False)
+    for parameter in model.parameters():
+        parameter.requires_grad_(False)
     model.config.use_cache = False
     attach_florg_adapters(
         model,
@@ -2939,6 +2969,8 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
     num_clients = experiment["num_clients"]
     if method not in METHODS:
         raise ValueError(f"unsupported method: {method}")
+    if method == "florist" and not 0 < float(experiment.get("florist_energy", 0.9)) <= 1:
+        raise ValueError("florist_energy must lie in (0, 1]")
     if "target_modules" not in model:
         raise ValueError(
             "3B runner requires model.target_modules; legacy week4 BERT configs "

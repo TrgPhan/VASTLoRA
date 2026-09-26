@@ -1,0 +1,7 @@
+# Keep Kaggle's CUDA-compatible torch wheel. Optional torchao is not used.
+transformers==5.10.2
+peft==0.20.0
+accelerate==1.14.0
+bitsandbytes==0.50.2
+datasets==5.0.0
+pytest>=8,<10

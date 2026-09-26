@@ -23,6 +23,16 @@ class CompetitorSpec:
 
 
 COMPETITOR_SPECS: dict[str, CompetitorSpec] = {
+    "flexlora": CompetitorSpec(
+        name="flexlora",
+        fidelity="FlexLoRA product mean/SVD redistribution; immediate-async full-state adaptation",
+        description="Exact compact implementation of weight-space SVD, with shared rank budgets and warmup.",
+    ),
+    "florist": CompetitorSpec(
+        name="florist",
+        fidelity="FLoRIST factor/core SVD and squared-energy rule; immediate-async adaptation with rank cap",
+        description="Paper spectral operator with tau=0.9, zero-padded client dispatch and explicit cap diagnostics.",
+    ),
     "fedavg_lora": CompetitorSpec(
         name="fedavg_lora",
         fidelity="matched immediate-async FedAvg over LoRA factors",

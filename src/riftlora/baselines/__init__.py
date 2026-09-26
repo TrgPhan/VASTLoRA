@@ -1,5 +1,10 @@
 """Federated LoRA baselines used by the matched Week 9 runner."""
 
+from riftlora.baselines.spectral_aggregation import (
+    aggregate_spectral_factors,
+    spectral_async_aggregate,
+)
+
 from riftlora.baselines.fed_lora import (
     FedExResidualController,
     fedavg_aggregate_factor_state,
@@ -20,6 +25,8 @@ from riftlora.baselines.flora import (
 )
 
 __all__ = [
+    "aggregate_spectral_factors",
+    "spectral_async_aggregate",
     "FedExResidualController",
     "FlorgState",
     "attach_florg_adapters",

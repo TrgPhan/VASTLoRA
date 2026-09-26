@@ -31,6 +31,8 @@ FIDELITY = {
     "fedavg_lora": competitor_fidelity("fedavg_lora"),
     "fedex_lora": competitor_fidelity("fedex_lora"),
     "flora_lora": competitor_fidelity("flora_lora"),
+    "flexlora": competitor_fidelity("flexlora"),
+    "florist": competitor_fidelity("florist"),
     "ffa_lora": competitor_fidelity("ffa_lora"),
     "florg": competitor_fidelity("florg"),
     "rift": "proposed rank-wise objective filter plus paired gate",
@@ -41,7 +43,6 @@ FIDELITY = {
 SKIPPED = {
     "AdaLoRA": "PEFT rank-allocation/training method, not an async server aggregation rule.",
     "Spectral Surgery full protocol": "The runner ports the paper's spectral operator, but applies it per async return on q/v updates instead of once post-hoc on o/down projections.",
-    "FLoRG": "Requires single-matrix/Gram LoRA reparameterization, incompatible with the current PEFT factor simulator without changing client training.",
     "GLoRA official": "No official public code found in the search; current runner lacks synchronous cohort consensus protocol.",
     "FedSteer official": "Official code exists, but its inactive-client replay protocol differs from delayed returned LoRA updates in this simulator.",
     "AlignFed full": "Requires version groups, semantic transform, and fairness weighting; current runner includes only whole-update calibration control.",

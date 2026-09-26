@@ -1,5 +1,10 @@
 # Week 8 - Tong hop ket qua Qwen2.5-1.5B
 
+> Tai lieu nay la snapshot cu (2026-09-06). Bang confirmation cap nhat, gom
+> output 72/72 cua FlexLoRA/FLoRIST/FLoRG tu `notebook08d0fd202f`, nam tai
+> [RIFT-Core Final Results Board](rift_core_final_results_board_vi.md) va
+> [Spectral FedLoRA Confirmation](week8_spectral_fedlora_kaggle_results_vi.md).
+
 > Luu y integrity: cac cot QNLI/MNLI truoc day goi la held-out dung range
 > 64-159, overlap 32 examples voi development range 0-95. Chung chi con gia tri
 > diagnostic. Confirmation sach thay the duoc khoa tai offset 256 trong

@@ -151,7 +151,8 @@ def test_notebook_compiles_and_only_uses_suite_methods():
     assert "jobs = all_jobs[SHARD_INDEX::SHARD_COUNT]" in all_source
     assert "all_jobs = job_list(matrix)" in all_source
     assert "selected_methods" not in all_source and "core_methods" not in all_source
-    assert "--force" not in all_source
+    assert "if completed_job(job):" in all_source
+    assert "if result_path_for(job).exists():" in all_source
 
 
 @pytest.mark.parametrize("suite", ["spectral_only", "factor_only"])
@@ -178,6 +179,7 @@ def test_notebook_launcher_builds_only_selected_flat_commands(monkeypatch, tmp_p
     scope = {"RUN_TRAINING": True, "GPU_IDS": [0, 1], "OUTPUT_ROOT": tmp_path,
              "jobs": jobs, "METHODS": methods, "SHARD_INDEX": 0,
              "sys": sys, "os": os, "json": json, "MATRIX": tmp_path / "matrix.json",
+             "completed_job": lambda job: False, "result_path_for": lambda job: tmp_path / "missing.json",
              "RUNNER": ROOT / "scripts/run_week8_classification_matrix.py", "REPO_DIR": ROOT,
              "subprocess": types.SimpleNamespace(Popen=popen, STDOUT=subprocess.STDOUT)}
     exec(compile(source, str(path), "exec"), scope)

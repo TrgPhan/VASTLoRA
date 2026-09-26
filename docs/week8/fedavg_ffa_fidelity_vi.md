@@ -100,3 +100,16 @@ Ket qua factor confirmation luu trong
 `/kaggle/working/week8_qwen15b_week8-factor-v2_confirmation`.
 Runner chi skip ket qua cung config, matrix, commit sach va implementation tag.
 Notebook pin code release tren GitHub; khong dung commit cu truoc ban sua.
+
+### Khoi phuc notebook7b4f16575b
+
+Batch nay da hoan thanh 48/48 job; loi nam o cell report (`No module named
+'riftlora'`) chu khong phai train. Notebook da them `REPO_DIR/src` vao
+`sys.path` cua kernel, giu nguyen training commit db4ca69 de skip ket qua hop le.
+Xem `docs/week8/week8_factor_kaggle_recovery_results_vi.md`.
+
+Gan output notebook cu vao Kaggle Add Input. `RESUME_ROOTS=['/kaggle/input']`,
+`REQUIRE_RESUME=True`, `RUN_TRAINING=False`: chi khoi phuc bang va ZIP.
+Neu con job thieu that su, dat RUN_TRAINING=True; queue loc job hoan thanh
+truoc khi cache model, va kiem tra lai truoc khi launch. Chi result khong
+day du moi duoc force rerun, khong ghi de job da kiem tra hop le.

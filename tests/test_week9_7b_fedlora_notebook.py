@@ -27,7 +27,7 @@ def test_notebook_is_clean_and_all_code_cells_compile():
 
 def test_notebook_pins_audited_release_and_is_safe_by_default():
     text = source_text(load_notebook())
-    assert "1fa1b17cb5847bf42947286361147d9f13ce2ca4" in text
+    assert "d9c732313ee7b93cf01bf6c22f6a60fcbf4fe465" in text
     assert "MODE = 'preflight'" in text
     assert "RUN_TRAINING = False" in text
     assert "--profile', 'qwen7b-fedlora'" in text

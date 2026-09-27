@@ -55,3 +55,7 @@ def test_notebook_preflights_and_validates_artifacts():
     assert "data/schedule identity differs across paired methods" in text
     assert "final_rouge_l_precision" in text
     assert "late_harmful_update_rate" in text
+    assert "test_week8_spectral_integration.py" not in text
+    assert "stdout=subprocess.PIPE" in text
+    assert "--tb=long" in text
+    assert "full output: {log_path}" in text

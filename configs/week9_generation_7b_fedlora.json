@@ -1,0 +1,52 @@
+{
+  "name": "rift-week9-generation-7b-fedlora-v1",
+  "description": "Qwen2.5-7B matched FedLoRA operator cohort on the frozen Week 9 Dolly convergence protocol.",
+  "primary_target": "flexlora",
+  "methods": [
+    "fedavg_lora",
+    "ffa_lora",
+    "flora_lora",
+    "flexlora",
+    "florist",
+    "florg"
+  ],
+  "seeds": [9101, 9102],
+  "regimes": ["noniid_high_staleness"],
+  "model_overrides": {
+    "name": "Qwen/Qwen2.5-7B-Instruct",
+    "revision": "a09a35458c702b33eeacc393d103063234e8bc28",
+    "load_in_4bit": true,
+    "gradient_checkpointing": false
+  },
+  "experiment_overrides": {
+    "collected_returns": 512,
+    "generation_eval_returns": [64, 128, 256, 512],
+    "florist_energy": 0.9
+  },
+  "task_overrides": {
+    "eval_examples": 128,
+    "prompt_format": "chat_concise_v1",
+    "eligibility_prompt_formats": ["chat_v1", "chat_concise_v1"]
+  },
+  "gates": {
+    "minimum_paired_seeds": 2,
+    "baselines": [
+      "fedavg_lora",
+      "ffa_lora",
+      "flora_lora",
+      "flexlora",
+      "florist",
+      "florg"
+    ],
+    "primary": "descriptive paired comparison on seeds 9101/9102; no standalone thesis GO verdict"
+  },
+  "notes": [
+    "The six methods use the same Qwen-7B revision, retained Dolly examples, concise prompt, non-IID high-staleness trace, local optimizer and return budget as the Week 9 convergence cohort.",
+    "[E] contains persistent-factor FedAvg-LoRA, immutable-A0 FFA-LoRA and the FLoRA stacking operator. [S] contains FlexLoRA, FLoRIST and FLoRG.",
+    "FlexLoRA, FLoRIST and FLoRA preserve their paper aggregation equations; one-return interpolation, heterogeneous prefix dispatch and the shared rank cap are explicit immediate-async adaptations.",
+    "FLoRG uses one trainable matrix, fixed semi-orthogonal L/R bases, Gram aggregation and Procrustes alignment. It is not a conventional two-factor LoRA adapter.",
+    "FLoRIST uses squared-energy tau=0.9 before the shared server rank cap; both ranks and retained energy are logged.",
+    "FedEx-LoRA is intentionally excluded: exact FedEx folds a dense residual into the frozen base, which cannot be reproduced faithfully by truncating that residual inside this NF4 stale-snapshot runner.",
+    "Milestones are development diagnostics. Do not select a winning checkpoint on the Week 9 held-out test split or call this two-seed extension a confirmation verdict."
+  ]
+}

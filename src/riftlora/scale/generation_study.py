@@ -31,21 +31,29 @@ class ClientWork:
 
 
 @contextmanager
-def isolated_evaluation(model):
+def isolated_evaluation(model, *, adapter_kind="lora"):
     python_rng, numpy_rng = random.getstate(), np.random.get_state()
     modes = [(module, module.training) for module in model.modules()]
-    factors = [(module.lora_A["default"].weight, module.lora_A["default"].weight.detach().clone(),
-                module.lora_B["default"].weight, module.lora_B["default"].weight.detach().clone())
-               for module in named_peft_lora_modules(model).values()]
+    if adapter_kind == "lora":
+        parameters = [parameter for module in named_peft_lora_modules(model).values()
+                      for parameter in (module.lora_A["default"].weight,
+                                        module.lora_B["default"].weight)]
+    elif adapter_kind == "florg":
+        adapters = getattr(model, "florg_adapters", None)
+        if adapters is None:
+            raise ValueError("FLoRG adapters are not attached")
+        parameters = [adapter.a for adapter in adapters.values()]
+    else:
+        raise ValueError(f"unsupported evaluation adapter kind: {adapter_kind}")
+    saved_parameters = [(parameter, parameter.detach().clone()) for parameter in parameters]
     devices = list(range(torch.cuda.device_count())) if torch.cuda.is_available() else []
     with torch.random.fork_rng(devices=devices):
         try:
             yield
         finally:
             with torch.no_grad():
-                for a, saved_a, b, saved_b in factors:
-                    a.copy_(saved_a)
-                    b.copy_(saved_b)
+                for parameter, saved in saved_parameters:
+                    parameter.copy_(saved)
             for module, training in modes:
                 module.training = training
             random.setstate(python_rng)
@@ -64,14 +72,23 @@ def evaluate_server(model, server_state, *, rank, evaluate, factor_state=None, f
 
 def write_milestone(directory, *, config, method, seed, measured_returns, total_returns,
                     server_version, server_state, metrics, details, work, elapsed_seconds,
-                    git_commit, git_worktree_dirty, config_fingerprint, events):
+                    git_commit, git_worktree_dirty, config_fingerprint, events,
+                    adapter_kind="lora"):
     directory = Path(directory) / "milestones" / f"returns_{measured_returns:04d}"
     directory.mkdir(parents=True, exist_ok=True)
-    checkpoint = dict(kind="evaluation_adapter_only", config=config, method=method, seed=seed,
+    if adapter_kind == "lora":
+        adapter = {name: {key: getattr(value, key).detach().cpu() for key in ("u", "s", "v")}
+                   for name, value in server_state.items()}
+        checkpoint_kind = "evaluation_adapter_only"
+    elif adapter_kind == "florg":
+        adapter = {name: value.detach().cpu() for name, value in server_state.items()}
+        checkpoint_kind = "evaluation_florg_only"
+    else:
+        raise ValueError(f"unsupported milestone adapter kind: {adapter_kind}")
+    checkpoint = dict(kind=checkpoint_kind, config=config, method=method, seed=seed,
                       measured_returns=measured_returns, total_returns=total_returns,
                       server_version=server_version,
-                      adapter={name: {key: getattr(value, key).detach().cpu() for key in ("u", "s", "v")}
-                               for name, value in server_state.items()})
+                      adapter=adapter)
     temporary = directory / "adapter.tmp"
     torch.save(checkpoint, temporary)
     temporary.replace(directory / "adapter.pt")
@@ -91,7 +108,7 @@ def write_milestone(directory, *, config, method, seed, measured_returns, total_
                   phase=config["provenance"]["phase"],
                   prompt_format=config["dataset"]["prompt_format"],
                   regime=config["experiment"]["regime_name"],
-                  checkpoint_kind="evaluation_adapter_only")
+                  checkpoint_kind=checkpoint_kind)
     record["sha256"] = {name: hashlib.sha256((directory / name).read_bytes()).hexdigest()
                          for name in ("adapter.pt", "eval_details.csv", "events.csv")}
     measured = [row for row in events if row["measured"]]

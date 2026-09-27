@@ -89,7 +89,7 @@ def test_group_split_dedup_and_length_filter_are_seed_independent():
     assert audit == generation.prepare_records(rows, Tokenizer(), ds, 16)[1]
 
 
-@pytest.mark.parametrize("method", ["raw", "freshness", "fedavg_lora", "fedex_lora", "flora_lora", "ffa_lora", "alignfed_calibration", "spectral_surgery", "rift", "rift_diag", "rift_core"])
+@pytest.mark.parametrize("method", ["raw", "freshness", "fedavg_lora", "fedex_lora", "flora_lora", "flexlora", "florist", "ffa_lora", "alignfed_calibration", "spectral_surgery", "rift", "rift_diag", "rift_core"])
 def test_generation_runs_shared_methods_with_real_peft(monkeypatch, tiny_model, method, tmp_path):
     from datasets import Dataset, DatasetDict
     data = DatasetDict(train=Dataset.from_list([row(i) for i in range(40)]),
@@ -163,13 +163,23 @@ def test_generation_runs_real_florg_backend(monkeypatch, tiny_model, tmp_path):
         return Tokenizer(), model
 
     monkeypatch.setattr(shared, "_load_florg_model", load_florg)
+    plain = config()
+    shared._validate_config(plain, "florg")
+    plain_result = shared.run_experiment(plain, method="florg", seed=9001)
     c = config()
+    c["experiment"]["generation_eval_returns"] = [2, 5]
     shared._validate_config(c, "florg")
-    result = shared.run_experiment(c, method="florg", seed=9001)
+    result = shared.run_experiment(c, method="florg", seed=9001, artifact_dir=tmp_path)
     assert result["method"] == "florg"
     assert len(result["events"]) == 6
     assert result["metrics"]["final_token_nll"] > 0
     assert len(result["final_eval_details"]) == 4
+    assert [row["measured_returns"] for row in result["development_learning_curve"]] == [2, 5]
+    checkpoint = torch.load(tmp_path / "milestones/returns_0002/adapter.pt", weights_only=True)
+    assert checkpoint["kind"] == "evaluation_florg_only"
+    assert all(torch.is_tensor(value) for value in checkpoint["adapter"].values())
+    assert plain_result["events"] == result["events"]
+    assert plain_result["final_eval_details"] == result["final_eval_details"]
     import pandas as pd
     from week9_artifacts import validate_run
     for key in ("events", "baseline_eval_details", "final_eval_details"):

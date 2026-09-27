@@ -22,6 +22,7 @@ PROFILE_RECIPES = {
     "qwen7b-convergence": "week9_generation_7b_convergence.json",
     "qwen7b-rift-diagnostics": "week9_generation_7b_rift_diagnostics.json",
     "qwen7b-seed9102": "week9_generation_7b_seed9102.json",
+    "qwen7b-fedlora": "week9_generation_7b_fedlora.json",
     "qwen15b-fedlora": "week9_generation_1_5b_fedlora.json",
 }
 
@@ -35,6 +36,9 @@ def load_matrix(phase="development", smoke=False, study=None, profile=None):
             raise ValueError(f"{profile} requires development and cannot be combined with a study")
         recipe = json.loads((ROOT / "configs" / PROFILE_RECIPES[profile]).read_text())
         matrix.update(name=recipe["name"], methods=recipe["methods"], seeds=recipe["seeds"])
+        for key in ("description", "primary_target"):
+            if key in recipe:
+                matrix[key] = recipe[key]
         matrix["regimes"] = [r for r in matrix["regimes"] if r["name"] in recipe["regimes"]]
         matrix["experiment"].update(recipe.get("experiment_overrides", {}))
         for task in matrix["tasks"]:

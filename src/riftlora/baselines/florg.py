@@ -40,7 +40,11 @@ class _FlorgAdapter(nn.Module):
         self.register_buffer("left", left)
         self.register_buffer("right", right)
         self.scaling = float(scaling)
-        self.a = nn.Parameter(torch.randn((rank, left.shape[1]), generator=generator) * 0.01)
+        self.a = nn.Parameter(
+            torch.randn(
+                (rank, left.shape[1]), generator=generator, device=left.device,
+            ) * 0.01
+        )
 
     def delta(self) -> torch.Tensor:
         return self.left @ (self.a.T @ self.a) @ self.right * self.scaling
@@ -52,11 +56,26 @@ class _FlorgAdapter(nn.Module):
         return F.linear(F.linear(inputs.to(self.a.dtype), right_factor), left_factor) * self.scaling
 
 
-def _semi_orthogonal(rows: int, columns: int, generator: torch.Generator) -> torch.Tensor:
+def _semi_orthogonal(
+    rows: int,
+    columns: int,
+    generator: torch.Generator,
+    *,
+    device: torch.device,
+) -> torch.Tensor:
+    # Qwen-7B has square 3584-wide projections. Building their Haar-style
+    # bases on CPU dominates startup, while device-local QR preserves the same
+    # semi-orthogonal construction and avoids a second host-to-device copy.
     if rows >= columns:
-        q, _ = torch.linalg.qr(torch.randn((rows, columns), generator=generator), mode="reduced")
+        q, _ = torch.linalg.qr(
+            torch.randn((rows, columns), generator=generator, device=device),
+            mode="reduced",
+        )
         return q
-    q, _ = torch.linalg.qr(torch.randn((columns, rows), generator=generator), mode="reduced")
+    q, _ = torch.linalg.qr(
+        torch.randn((columns, rows), generator=generator, device=device),
+        mode="reduced",
+    )
     return q.T
 
 
@@ -92,15 +111,21 @@ def attach_florg_adapters(
         out_features = int(module.out_features)
         in_features = int(module.in_features)
         k = min(out_features, in_features)
-        generator = torch.Generator(device="cpu").manual_seed(seed + index * 7919)
-        left = _semi_orthogonal(out_features, k, generator)
-        right = _semi_orthogonal(in_features, k, generator).T
+        device = module.weight.device
+        if device.type not in {"cpu", "cuda"}:
+            raise ValueError(f"unsupported FLoRG basis device: {device}")
+        generator = torch.Generator(device=device).manual_seed(seed + index * 7919)
+        left = _semi_orthogonal(out_features, k, generator, device=device)
+        right = _semi_orthogonal(in_features, k, generator, device=device).T
         key = f"layer_{index}"
         names[name] = key
         adapters[key] = _FlorgAdapter(left, right, rank, alpha / rank if alpha is not None else 1.0, generator)
         # Quantized target weights may be uint8; trainable adapters stay FP32.
         adapters[key].to(device=module.weight.device, dtype=torch.float32)
-        states[name] = FlorgState(adapters[key].a.detach().cpu().clone(), left, right, adapters[key].scaling)
+        states[name] = FlorgState(
+            adapters[key].a.detach(), adapters[key].left, adapters[key].right,
+            adapters[key].scaling,
+        )
 
     model.add_module("florg_adapters", adapters)
     handles = []

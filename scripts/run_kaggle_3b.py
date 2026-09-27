@@ -286,6 +286,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int,
             generation_audit=generation_audit,
             partition_diagnostics=partition_diagnostics,
             work_tracker=work_tracker,
+            artifact_dir=artifact_dir,
         )
 
     tokenizer, model = _load_model(config)
@@ -1385,6 +1386,7 @@ def _run_florg_experiment(
     generation_audit,
     partition_diagnostics,
     work_tracker,
+    artifact_dir: Path | None,
 ) -> dict[str, Any]:
     """Run the actual single-matrix FLoRG backend on the shared event trace."""
     experiment = config["experiment"]
@@ -1405,6 +1407,12 @@ def _run_florg_experiment(
     rng = random.Random(seed)
     harm_epsilon = float(experiment.get("harm_epsilon", 1e-6))
     start_time = time.perf_counter()
+    milestones = experiment.get("generation_eval_returns", [])
+    curve = []
+    final_at_milestone = None
+    milestone_seconds = 0.0
+    study_commit = _git_commit() if milestones else None
+    study_dirty = _git_worktree_dirty() if milestones else None
 
     for event_index, event in enumerate(trace.records):
         active_rank = int(event.rank)
@@ -1502,12 +1510,57 @@ def _run_florg_experiment(
             "mean_right_rank": active_rank,
         })
 
+        measured_returns = event_index + 1 - int(experiment["warmup_returns"])
+        if measured_returns in milestones:
+            from riftlora.scale.generation_study import isolated_evaluation, write_milestone
+
+            checkpoint_start = time.perf_counter()
+            with isolated_evaluation(model, adapter_kind="florg"):
+                saved_state = capture_florg_state(model)
+                try:
+                    load_florg_state(model, server_state)
+                    checkpoint_metrics, checkpoint_details = evaluate_task(
+                        model,
+                        tokenizer,
+                        validation,
+                        dataset_config=dataset_config,
+                        max_length=config["model"]["max_length"],
+                        batch_size=experiment["eval_batch_size"],
+                    )
+                finally:
+                    load_florg_state(model, saved_state)
+            record = write_milestone(
+                artifact_dir or Path(config["output_dir"]) / f"florg_seed{seed}",
+                config=config,
+                method="florg",
+                seed=seed,
+                measured_returns=measured_returns,
+                total_returns=event_index + 1,
+                server_version=event.new_server_version,
+                server_state=server_state,
+                metrics=checkpoint_metrics,
+                details=checkpoint_details,
+                work=work_tracker.snapshot(),
+                elapsed_seconds=time.perf_counter() - start_time,
+                git_commit=study_commit,
+                git_worktree_dirty=study_dirty,
+                config_fingerprint=_config_fingerprint(config),
+                events=event_rows,
+                adapter_kind="florg",
+            )
+            curve.append(record)
+            milestone_seconds += time.perf_counter() - checkpoint_start
+            print(
+                f"Milestone {measured_returns}: NLL={checkpoint_metrics['nll']:.6f}, "
+                f"ROUGE-L={checkpoint_metrics['rouge_l']:.6f}",
+                flush=True,
+            )
+            if measured_returns == experiment["collected_returns"]:
+                final_at_milestone = (checkpoint_metrics, checkpoint_details)
+
     load_florg_state(model, server_state)
-    final, final_details = evaluate_task(
-        model,
-        tokenizer,
-        validation,
-        dataset_config=dataset_config,
+    final, final_details = final_at_milestone or evaluate_task(
+        model, tokenizer, validation, dataset_config=dataset_config,
         max_length=config["model"]["max_length"],
         batch_size=experiment["eval_batch_size"],
     )
@@ -1578,6 +1631,8 @@ def _run_florg_experiment(
                         "rouge_l_recall", "mean_generated_tokens"):
                 metrics[f"{prefix}_{key}"] = values[key]
         metrics.update(work_tracker.snapshot())
+        if milestones:
+            metrics["milestone_evaluation_seconds"] = milestone_seconds
         generation_audit["selected_source_ids"] = {
             name: list(data["source_id"]) if data is not None else []
             for name, data in (("clients", train), ("gradient", calibration_gradient), ("gate", calibration_gate),
@@ -1611,6 +1666,8 @@ def _run_florg_experiment(
         "baseline_eval_details": baseline_details,
         "final_eval_details": final_details,
     }
+    if milestones:
+        result["development_learning_curve"] = curve
     return result
 
 
@@ -3015,7 +3072,7 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
             raise ValueError(f"3B runner requires dataset.{field}")
     task = str(dataset.get("task", dataset.get("subset", ""))).lower()
     if task == "generation":
-        if method not in {"raw", "freshness", "fedavg_lora", "fedex_lora", "flora_lora", "florg", "ffa_lora", "fedrot", "alignfed_calibration", "spectral_surgery", "rift", "rift_diag", "rift_core"}:
+        if method not in {"raw", "freshness", "fedavg_lora", "fedex_lora", "flora_lora", "flexlora", "florist", "florg", "ffa_lora", "fedrot", "alignfed_calibration", "spectral_surgery", "rift", "rift_diag", "rift_core"}:
             raise ValueError("method is not validated for the Week 9 generative protocol")
         for key in ("component_score_objective", "calibration_gate_objective", "monitor_objective"):
             if experiment.get(key) != "label_nll":

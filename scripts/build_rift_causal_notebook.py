@@ -4,16 +4,25 @@ import base64
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE_COMMIT = "907d3c45c0c46eedac1e071f82a98f59502b7a24"
+BASE_COMMIT = "bbe40e0b4f91dd2be30e3a7dc273f1e1efb8ea18"
 DESTINATION = ROOT / "notebooks/kaggle_qwen_1_5b_rift_causal_confirmation.ipynb"
 
 
 def build():
+    tracked = {
+        line
+        for line in subprocess.check_output(
+            ["git", "ls-files"], cwd=ROOT, text=True
+        ).splitlines()
+        if line
+    }
     paths = sorted(
-        {
+        p
+        for p in {
             *(ROOT / "src").rglob("*.py"),
             *(ROOT / "scripts").glob("*.py"),
             *(ROOT / "tests").glob("*.py"),
@@ -22,6 +31,7 @@ def build():
             ROOT / "pyproject.toml",
             ROOT / "VAST_LoRA_Research_Guide_12_Weeks.md",
         }
+        if p.relative_to(ROOT).as_posix() in tracked
     )
     files = {
         p.relative_to(ROOT).as_posix(): p.read_text(encoding="utf-8") for p in paths
@@ -50,8 +60,9 @@ def build():
 
 Enable Internet and GPU T4 x2. This notebook clones a pinned public GitHub
 revision, then applies a SHA256-verified embedded snapshot of the reviewed code.
-The new snapshot is bundled because local additions are not yet published to GitHub.
-No token or private credential is included. Source/config hashes identify the actual run.
+The runtime implementation is published at the pinned revision; the embedded
+tracked-file snapshot also preserves the exact notebook release. No token or
+private credential is included. Source/config hashes identify the actual run.
 
 Modes: `preflight` (no training), `smoke` (QNLI, tiny budget), `development`,
 `confirmation` (4 views, seeds 8201-8206). This is a NEW prospective study,

@@ -62,7 +62,10 @@ def test_bundle_integrity_and_dependency_closure(notebook, tmp_path):
         assert name in files
     from run_rift_causal_study import source_manifest
 
-    assert source_manifest(tmp_path) == source_manifest(ROOT)
+    root_manifest = source_manifest(ROOT)
+    bundled_manifest = source_manifest(tmp_path)
+    assert bundled_manifest
+    assert all(root_manifest[name] == digest for name, digest in bundled_manifest.items())
     import subprocess
 
     result = subprocess.run(

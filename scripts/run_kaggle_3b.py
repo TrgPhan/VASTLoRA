@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import copy
@@ -63,6 +63,7 @@ from riftlora.scale import (
 )
 from riftlora.scale.tradeoff import reserved_train_eval_indices
 from riftlora.scale.core_repair import CoreRepairConfig, repair_compact_core
+from riftlora.scale.server_adaptation import ServerAdaptationConfig, fit_server_adapter
 from riftlora.scale.spectral_surgery import edit_trained_adapter
 
 
@@ -92,6 +93,8 @@ METHODS = (
     "rift_core",
     "rift_diag",
     "spectral_filter",
+    "server_lora",
+    "server_only",
     "spectral_surgery",
     "spectral_surgery_posthoc",
     "alignfed_calibration",
@@ -173,6 +176,9 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int,
             dataset_config.get("subset"),
             **dataset_kwargs,
         )
+    if config.get("causal_study"):
+        from riftlora.scale.causal_study import attach_source_ids
+        raw = attach_source_ids(raw)
     train_split = dataset_config["train_split"]
     eval_split = dataset_config.get("eval_split", dataset_config["validation_split"])
     eval_shuffle_seed = dataset_config.get("eval_shuffle_seed", seed)
@@ -194,6 +200,13 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int,
             raise ValueError("eval_offset must select at least one evaluation example")
         validation = validation.select(range(eval_offset, eval_end))
         train = raw[train_split]
+    causal_data_preparation = None
+    if config.get("causal_study") and dataset_config.get("study_content_policy"):
+        from riftlora.scale.causal_study import prepare_content_disjoint_splits
+        train, validation, causal_data_preparation = prepare_content_disjoint_splits(raw, dataset_config)
+    elif config.get("causal_study"):
+        from riftlora.scale.causal_study import exclude_reserved_windows
+        train = exclude_reserved_windows(raw, train, dataset_config)
     if len(validation) != eval_examples:
         raise ValueError(
             f"requested {eval_examples} evaluation examples, selected {len(validation)}"
@@ -271,6 +284,15 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int,
         buffer_size=int(experiment.get("buffer_size", 1)),
         schedule_mode=str(experiment.get("schedule_mode", "async")),
     ).run(max_returns=total_returns)
+
+    causal_audit = None
+    if config.get("causal_study"):
+        from riftlora.scale.causal_study import experiment_audit
+        causal_audit = experiment_audit(
+            config, method, trace, partitions, train=train, gradient=calibration_gradient,
+            gate=calibration_gate, monitor=monitor, evaluation=validation,
+        )
+        causal_audit["data_preparation"] = causal_data_preparation
 
     if method == "florg":
         return _run_florg_experiment(
@@ -400,7 +422,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int,
                 initialize_free_directions=(method not in {"flexlora", "florist"} or event.base_version == 0),
             )
         before = capture_factor_snapshot(model)
-        local_loss = _train_client(
+        local_loss = 0.0 if method == "server_only" else _train_client(
             model,
             tokenizer,
             train,
@@ -424,6 +446,8 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int,
             active_rank=active_rank,
             rank_rtol=experiment["rank_rtol"],
         )
+        if method == "server_only":
+            innovations = empty_adapter_state(model)
 
         accepted_method = (
             "freshness" if event_index < experiment["warmup_returns"]
@@ -572,6 +596,8 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int,
             "spectral_filter",
             "spectral_surgery",
             "alignfed_calibration",
+            "server_lora",
+            "server_only",
         }:
             load_compact_adapter_state(
                 model,
@@ -700,30 +726,51 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int,
                     abs(scores.calibration_loss), 1e-12
                 )
                 relative_predicted_gains.append(relative_predicted_gain)
-                if accepted_method in {"rift_core", "rift_diag"}:
-                    repair = repair_compact_core(
-                        model, innovations, scores.scores, gradient_batches,
-                        loss_fn=component_score_loss_fn,
-                        server_weight=float(experiment["server_update_weight"]),
-                        staleness=event.staleness,
-                        diagonal_only=accepted_method == "rift_diag",
-                        config=CoreRepairConfig(**experiment.get("rift_core", {})),
-                    )
-                    core_diagnostics = repair.diagnostics
+                if accepted_method in {"rift_core", "rift_diag", "server_lora", "server_only"}:
+                    fit_start = time.perf_counter()
+                    if accepted_method in {"server_lora", "server_only"}:
+                        initial = current_state if accepted_method == "server_only" else _aggregate_scaled_updates(
+                            current_state, innovations, scale=1.0, experiment=experiment,
+                        )
+                        candidate_updates, core_diagnostics = fit_server_adapter(
+                            model, current_state, initial, gradient_batches,
+                            loss_fn=component_score_loss_fn,
+                            rank=experiment["server_max_rank"],
+                            server_weight=float(experiment["server_update_weight"]),
+                            seed=seed * 10000 + event_index,
+                            rank_rtol=experiment["rank_rtol"],
+                            config=ServerAdaptationConfig(**experiment.get("server_adaptation", {})),
+                        )
+                    else:
+                        repair = repair_compact_core(
+                            model, innovations, scores.scores, gradient_batches,
+                            loss_fn=component_score_loss_fn,
+                            server_weight=float(experiment["server_update_weight"]),
+                            staleness=event.staleness,
+                            diagonal_only=accepted_method == "rift_diag",
+                            config=CoreRepairConfig(**experiment.get("rift_core", {})),
+                        )
+                        candidate_updates = repair.updates
+                        core_diagnostics = repair.diagnostics
+                    if causal_audit is not None:
+                        core_diagnostics["server_fit_seconds"] = time.perf_counter() - fit_start
+                    core_diagnostics["score_forward_calls"] = float(len(gradient_batches))
+                    core_diagnostics["score_backward_calls"] = float(len(gradient_batches) if scores.total_rank else 0)
                     repair_gate = dict(experiment)
                     repair_gate["rift_include_freshness_fallback"] = False
                     repair_gate["rift_gate_selection"] = "min_risk"
                     next_state, accepted_updates, scale, mean_delta, route = _rift_gate_state(
-                        model, tokenizer, current_state, repair.updates, innovations,
+                        model, tokenizer, current_state, candidate_updates, innovations,
                         calibration_gate, dataset_config=dataset_config,
                         max_length=config["model"]["max_length"],
                         batch_size=experiment["eval_batch_size"],
                         experiment=repair_gate, freshness=freshness,
                         comparator_updates=filtered,
+                        diagnostics=core_diagnostics,
                     )
                     core_diagnostics.update({
                         "core_positive_filter_rank": float(selected_rank),
-                        "core_candidate_rank": float(sum(u.rank for u in repair.updates.values())),
+                        "core_candidate_rank": float(sum(u.rank for u in candidate_updates.values())),
                         "core_accepted_update_rank": float(sum(u.rank for u in accepted_updates.values())),
                         "core_server_state_rank": float(sum(u.rank for u in next_state.values())),
                     })
@@ -976,6 +1023,7 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int,
                 "method": accepted_method,
                 "measured": event_index >= experiment["warmup_returns"],
                 "local_loss": local_loss,
+                "client_optimizer_steps": 0 if method == "server_only" else experiment["local_steps"],
                 "current_loss": current_monitor_loss,
                 "accepted_loss": accepted_monitor_loss,
                 "update_accepted": update_accepted,
@@ -1326,6 +1374,16 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int,
                 for name, data in (("clients", train), ("gradient", calibration_gradient),
                                    ("gate", calibration_gate), ("monitor", monitor), ("evaluation", validation))
             }
+    if causal_audit is not None:
+        for key in ("server_fit_seconds", "server_fit_backward_calls", "gate_loss_evaluations",
+                    "score_forward_calls", "score_backward_calls", "client_optimizer_steps"):
+            metrics[key] = sum(float(row.get(key, 0)) for row in measured_rows)
+        metrics["server_fit_examples_seen"] = sum(
+            row.get("server_fit_steps", 0) * calibration_gradient_examples for row in measured_rows
+        )
+        metrics["max_server_fit_parameters"] = max(
+            (row.get("server_fit_parameters", 0) for row in measured_rows), default=0
+        )
     result = {
         "schema_version": 5,
         "method": method,
@@ -1369,6 +1427,8 @@ def run_experiment(config: dict[str, Any], *, method: str, seed: int,
     }
     if milestones:
         result["development_learning_curve"] = curve
+    if causal_audit is not None:
+        result["causal_study"] = causal_audit
     return result
 
 
@@ -1853,6 +1913,19 @@ def _train_client(
         for _ in range(gradient_accumulation_steps):
             selected = [rng.choice(client_indices) for _ in range(batch_size)]
             examples = [dataset[index] for index in selected]
+            if dataset_config.get("client_objective", "label_nll") == "class_nll":
+                batch, _ = _make_classification_candidate_batches(
+                    model, tokenizer, examples, dataset_config=dataset_config,
+                    max_length=max_length, batch_size=batch_size,
+                )[0]
+                loss = _classification_candidate_nll_loss(
+                    model, batch, eos_token_id=tokenizer.eos_token_id,
+                ) / gradient_accumulation_steps
+                if not torch.isfinite(loss):
+                    raise RuntimeError("non-finite local class NLL")
+                loss.backward()
+                losses.append(float(loss.detach()) * gradient_accumulation_steps)
+                continue
             batch = _collate_examples(
                 tokenizer,
                 [(item, int(item[label_column])) for item in examples],
@@ -1938,7 +2011,6 @@ def evaluate_classification(
             dataset_config=dataset_config,
             max_length=max_length,
         )
-        labels = batch["labels"]
         model_inputs = _move_batch(batch, device)
         shifted_logits, shifted_labels = _supervised_suffix_logits(model, model_inputs)
         token_loss = F.cross_entropy(
@@ -2276,7 +2348,6 @@ def _per_example_classification_losses(
                 dataset_config=dataset_config,
                 max_length=max_length,
             )
-            labels = batch["labels"]
             model_inputs = _move_batch(batch, device)
             shifted_logits, shifted_labels = _supervised_suffix_logits(
                 model, model_inputs
@@ -2354,12 +2425,13 @@ def _rift_gate_state(
     experiment: Mapping[str, Any],
     freshness: float,
     comparator_updates: Mapping[str, CompactSVD] | None = None,
+    diagnostics: dict[str, float] | None = None,
 ) -> tuple[dict[str, CompactSVD], dict[str, CompactSVD], float, float, str]:
     candidates: list[tuple[str, float, Mapping[str, CompactSVD]]] = []
     if comparator_updates is not None:
         # Put the filter baseline first so an exact tie retains the simpler update.
         candidates.append(("spectral_comparator", 1.0, comparator_updates))
-    if sum(update.rank for update in filtered_updates.values()):
+    if sum(update.rank for update in filtered_updates.values()) or experiment.get("study_fixed_gate_budget", False):
         scales = sorted(
             {float(value) for value in experiment.get("rift_step_scales", [1.0, 0.5, 0.25, 0.125])},
             reverse=True,
@@ -2369,6 +2441,9 @@ def _rift_gate_state(
         candidates.extend(("rank_filtered", scale, filtered_updates) for scale in scales)
     if bool(experiment.get("rift_include_freshness_fallback", True)):
         candidates.append(("freshness_fallback", freshness, raw_updates))
+    if diagnostics is not None:
+        diagnostics["gate_candidate_count"] = float(len(candidates))
+        diagnostics["gate_loss_evaluations"] = float(1 + len(candidates))
 
     current_losses = _per_example_classification_losses(
         model,
@@ -2445,6 +2520,9 @@ def _rift_gate_state(
             selected_delta = mean_delta
             selected_risk_bound = risk_bound
             selected_route = route
+    if experiment.get("study_fixed_gate_budget", False) and not any(u.rank for u in selected_updates.values()):
+        selected_scale = 0.0
+        selected_route = "reject_noop"
     return selected_state, selected_updates, selected_scale, selected_delta, selected_route
 
 
@@ -3058,6 +3136,22 @@ def _validate_config(config: Mapping[str, Any], method: str) -> None:
     dataset = config["dataset"]
     model = config["model"]
     num_clients = experiment["num_clients"]
+    if dataset.get("client_objective", "label_nll") not in {"label_nll", "class_nll"}:
+        raise ValueError("client_objective must be label_nll or class_nll")
+    if dataset.get("task") == "generation" and dataset.get("client_objective") == "class_nll":
+        raise ValueError("class_nll client objective is classification only")
+    if method in {"server_lora", "server_only"}:
+        ServerAdaptationConfig(**experiment.get("server_adaptation", {})).validate()
+        if dataset.get("task") == "generation" or experiment.get("component_score_objective") != "class_nll":
+            raise ValueError("server adaptation controls require classification class_nll")
+        for field in ("calibration_gradient_examples", "calibration_gate_examples", "server_update_weight"):
+            if float(experiment.get(field, 0)) <= 0:
+                raise ValueError(f"server adaptation requires positive {field}")
+    if config.get("causal_study"):
+        if method not in {"raw", "freshness", "rift_core", "rift_diag", "server_lora", "server_only"}:
+            raise ValueError("unsupported causal study method")
+        if dataset.get("task") == "generation":
+            raise ValueError("causal study audit currently supports classification only")
     if method not in METHODS:
         raise ValueError(f"unsupported method: {method}")
     if method == "florist" and not 0 < float(experiment.get("florist_energy", 0.9)) <= 1:
@@ -3492,4 +3586,3 @@ def _resolve_single_regime_config(config: Mapping[str, Any]) -> dict[str, Any]:
 
 if __name__ == "__main__":
     main()
-

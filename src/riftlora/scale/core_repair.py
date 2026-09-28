@@ -20,8 +20,11 @@ class CoreRepairConfig:
     radius: float = 0.5
     proximal_weight: float = 0.01
     delay_scale: float = 8.0
+    radius_mode: str = "staleness"
 
     def validate(self) -> None:
+        if self.radius_mode not in {"staleness", "constant"}:
+            raise ValueError("radius_mode must be staleness or constant")
         if isinstance(self.steps, bool) or not isinstance(self.steps, int) or self.steps < 1:
             raise ValueError("core repair steps must be a positive integer")
         for name in ("learning_rate", "radius", "proximal_weight", "delay_scale"):
@@ -67,7 +70,9 @@ def repair_compact_core(
     if not batches or any(not math.isfinite(w) or w <= 0 for _, w in batches):
         raise ValueError("core repair needs finite positive microbatch weights")
     total_weight = sum(w for _, w in batches)
-    radius = config.radius / math.sqrt(1.0 + staleness / config.delay_scale)
+    radius = config.radius
+    if config.radius_mode == "staleness":
+        radius /= math.sqrt(1.0 + staleness / config.delay_scale)
     cores, anchors, bases = {}, {}, {}
     handles = []
     modes = [(module, module.training) for module in model.modules()]
@@ -152,6 +157,10 @@ def repair_compact_core(
             "core_fit_loss_initial": fit_losses[0] if fit_losses else 0.0,
             "core_fit_loss_last_pre_step": fit_losses[-1] if fit_losses else 0.0,
             "core_fit_steps": float(config.steps if active else 0),
+            "server_fit_steps": float(config.steps if active else 0),
+            "server_fit_backward_calls": float(config.steps * len(batches) if active else 0),
+            "server_fit_weight_per_step": float(total_weight),
+            "server_fit_parameters": float(sum(c.numel() for c in active)),
         })
     finally:
         for handle in handles:

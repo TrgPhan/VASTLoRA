@@ -1,0 +1,42 @@
+{
+  "name": "rift-core-causal-v2",
+  "content_policy": "nfkc_whitespace_groups_v1",
+  "base_matrix": "configs/rift_core_heldout_confirmation_matrix.json",
+  "experiment": {"collected_returns": 96},
+  "phases": {
+    "development": {"seeds": [8101, 8102, 8103], "eval_examples": 512},
+    "confirmation": {"seeds": [8201, 8202, 8203, 8204, 8205, 8206], "eval_examples": 1024},
+    "smoke": {"seeds": [8101], "eval_examples": 8}
+  },
+  "eval_offsets": {
+    "sst2": {"development": 8192, "confirmation": 9216},
+    "qnli": {"development": 0, "confirmation": 3072},
+    "mnli_m": {"development": 0, "confirmation": 4096},
+    "mnli_mm": {"development": 0, "confirmation": 4096}
+  },
+  "variants": {
+    "core": {"method": "rift_core", "experiment": {}},
+    "diag": {"method": "rift_diag", "experiment": {}},
+    "no_repair": {"method": "rift_core", "experiment": {"rift_core": {"radius": 0.0}}},
+    "core_constant": {"method": "rift_core", "experiment": {"rift_core": {"radius_mode": "constant"}}},
+    "server_lora": {"method": "server_lora", "experiment": {"server_adaptation": {"steps": 3, "learning_rate": 0.0002}}},
+    "server_only": {"method": "server_only", "experiment": {"server_adaptation": {"steps": 3, "learning_rate": 0.0002}}},
+    "raw": {"method": "raw", "experiment": {}},
+    "core_lr001": {"method": "rift_core", "experiment": {"rift_core": {"learning_rate": 0.01}}},
+    "core_lr006": {"method": "rift_core", "experiment": {"rift_core": {"learning_rate": 0.06}}},
+    "server_lr00005": {"method": "server_lora", "experiment": {"server_adaptation": {"steps": 3, "learning_rate": 0.00005}}},
+    "server_lr0008": {"method": "server_lora", "experiment": {"server_adaptation": {"steps": 3, "learning_rate": 0.0008}}}
+  },
+  "suites": {
+    "attribution": {"variants": ["core", "diag", "no_repair", "server_lora", "server_only", "raw"], "regimes": ["noniid_high_staleness"]},
+    "delay": {"variants": ["core", "core_constant", "diag", "raw"], "regimes": ["iid_balanced_latency", "noniid_balanced_latency", "iid_high_staleness", "noniid_high_staleness"]},
+    "objective": {"variants": ["core", "diag", "server_lora", "raw"], "regimes": ["noniid_high_staleness"], "client_objective": "class_nll"},
+    "tuning": {"variants": ["core_lr001", "core", "core_lr006", "server_lr00005", "server_lora", "server_lr0008"], "regimes": ["noniid_high_staleness"]}
+  },
+  "regimes": {
+    "iid_balanced_latency": {"partition_mode": "iid", "compute_times": [1, 1, 1, 1]},
+    "noniid_balanced_latency": {"partition_mode": "label_shard", "compute_times": [1, 1, 1, 1]},
+    "iid_high_staleness": {"partition_mode": "iid", "compute_times": [1, 2, 5, 10]},
+    "noniid_high_staleness": {"partition_mode": "label_shard", "compute_times": [1, 2, 5, 10]}
+  }
+}

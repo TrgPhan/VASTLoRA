@@ -23,6 +23,16 @@ class CompetitorSpec:
 
 
 COMPETITOR_SPECS: dict[str, CompetitorSpec] = {
+    "server_lora": CompetitorSpec(
+        name="server_lora",
+        fidelity="custom ordinary A/B server-fit control with shared positive-filter gate; not a published method",
+        description="Fits from the rank-capped raw aggregate on the same calibration examples and optimizer-step budget.",
+    ),
+    "server_only": CompetitorSpec(
+        name="server_only",
+        fidelity="custom calibration-only diagnostic; no client training, not a federated baseline",
+        description="Fits A/B at measured server opportunities with a no-op comparator and shared gate.",
+    ),
     "flexlora": CompetitorSpec(
         name="flexlora",
         fidelity="FlexLoRA product mean/SVD redistribution; immediate-async full-state adaptation",

@@ -18,20 +18,24 @@ def notebook():
     return build()
 
 
-def test_cells_compile_and_no_training_defaults(notebook):
+def test_cells_compile_and_confirmation_defaults(notebook):
     for cell in notebook["cells"]:
         if cell["cell_type"] == "code":
             compile("".join(cell["source"]), cell["id"], "exec")
             assert cell["outputs"] == [] and cell["execution_count"] is None
     settings = ast.parse("".join(notebook["cells"][1]["source"]))
-    values = {
-        n.targets[0].id: ast.literal_eval(n.value)
-        for n in settings.body
-        if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
-    }
-    assert values["RUN_MODE"] == "preflight"
-    assert values["RUN_TRAINING"] is False
-    assert values["HELDOUT_AUDIT_NOTE"] == ""
+    values = {}
+    for node in settings.body:
+        if not isinstance(node, ast.Assign) or not isinstance(node.targets[0], ast.Name):
+            continue
+        try:
+            values[node.targets[0].id] = ast.literal_eval(node.value)
+        except (ValueError, TypeError):
+            pass
+    assert values["RUN_MODE"] == "confirmation"
+    assert values["RUN_TRAINING"] is True
+    assert values["SEEDS"] == [6102, 6101]
+    assert "not an untouched held-out cohort" in values["HELDOUT_AUDIT_NOTE"]
     assert values["REQUIRE_SMOKE"] is False
 
 

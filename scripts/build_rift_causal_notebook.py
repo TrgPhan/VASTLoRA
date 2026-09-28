@@ -65,10 +65,10 @@ tracked-file snapshot also preserves the exact notebook release. No token or
 private credential is included. Source/config hashes identify the actual run.
 
 Modes: `preflight` (no training), `smoke` (QNLI, tiny budget), `development`,
-`confirmation` (4 views, seeds 8201-8206). This is a NEW prospective study,
-not the historical Week8 6101-6106 table. Content-group splits v2 fix duplicate
-leakage and cannot be pooled with legacy results. Fresh seeds do not certify
-untouched held-out data: confirmation requires your actual audit note.
+and `confirmation`. The current launch preset is a two-seed repeated
+confirmation on 6102 and 6101 across all four views. These historical Week8
+seeds are not an untouched held-out cohort. Content-group splits v2 fix
+duplicate leakage and cannot be pooled with legacy results.
 
 Attribution has Core, Diag, no-repair, ordinary server A/B, server-only, raw.
 Server controls are custom controls, not full-paper competitor reproductions.
@@ -80,14 +80,15 @@ Same labeled-data/step/gate budget does not mean same FLOPs. No automatic GO ver
         """from pathlib import Path
 import base64, csv, hashlib, json, os, shutil, signal, subprocess, sys, time, zlib
 
-RUN_MODE = 'preflight'  # preflight / smoke / development / confirmation
+RUN_MODE = 'confirmation'  # preflight / smoke / development / confirmation
 SUITE = 'attribution'  # attribution / delay / objective / tuning (development only)
-RUN_TRAINING = False
+RUN_TRAINING = True
 TASKS = []  # [] = all four views; smoke defaults to ['qnli']
 VARIANTS = []  # [] = all variants of the selected suite
-SEEDS = None  # None = spec defaults; e.g. [8101] for a pilot or [8201, 8202, 8203]
+SEEDS = [6102, 6101]  # Explicit two-seed repeated confirmation cohort.
 GPU_IDS = [0, 1]  # One process/model per T4; VRAM is not pooled.
-HELDOUT_AUDIT_NOTE = ''  # Required for confirmation; record actual history/split audit.
+HELDOUT_AUDIT_NOTE = ('Repeated two-seed confirmation requested with historical Week8 '
+                      'seeds 6102 and 6101; not an untouched held-out cohort.')
 RESUME_ROOTS = [Path('/kaggle/input')]
 REQUIRE_RESUME = False  # True blocks a fresh run when no matching artifacts were imported.
 REQUIRE_SMOKE = False  # Optional safety gate; True requires matching QNLI smoke artifacts.
